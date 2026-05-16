@@ -1,12 +1,22 @@
 import { useState, useRef, useCallback } from 'react';
-import { StoreProvider } from './store';
+import { StoreProvider, useStore } from './store';
 import Canvas from './components/Canvas';
 import Toolbar from './components/Toolbar';
 import TopToolbar from './components/TopToolbar';
 import LayerPanel from './components/LayerPanel';
+import FramePanel from './components/FramePanel';
+import WidgetPanel from './components/WidgetPanel';
 import PropertiesPanel from './components/PropertiesPanel';
 import CodePanel from './components/CodePanel';
 import './App.css';
+
+/** Picks the left-panel content based on the current scene mode. */
+function ScenePanel() {
+  const { state } = useStore();
+  if (state.editor.mode === 'animation') return <FramePanel />;
+  if (state.editor.mode === 'widgets') return <WidgetPanel />;
+  return <LayerPanel />;
+}
 
 function ResizeHandle({ side, onResize }: { side: 'left' | 'right' | 'bottom'; onResize: (delta: number) => void }) {
   const startRef = useRef(0);
@@ -49,7 +59,7 @@ export default function App() {
             <>
               <aside className="left-panel" style={{ width: leftWidth }}>
                 <Toolbar />
-                <LayerPanel />
+                <ScenePanel />
               </aside>
               <ResizeHandle side="left" onResize={(d) => setLeftWidth((w) => Math.max(180, Math.min(420, w + d)))} />
             </>

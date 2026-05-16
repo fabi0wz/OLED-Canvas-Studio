@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import type { TextElement, PixelsElement } from '../types';
+import type { TextElement, PixelsElement, AnimationRefElement, WidgetRefElement } from '../types';
 
 export default function LayerPanel() {
   const { state, dispatch } = useStore();
@@ -96,25 +96,38 @@ export default function LayerPanel() {
 
               {layer.elements.length > 0 && (
                 <ul className="layer-elements">
-                  {layer.elements.map((el) => (
-                    <li
-                      key={el.id}
-                      className={el.id === state.selectedId ? 'selected' : ''}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        dispatch({ type: 'SELECT_ELEMENT', payload: el.id });
-                      }}
-                    >
-                      <span className={`el-type el-type-${el.type}`}>{el.type}</span>
-                      <span className={el.visible ? 'el-label' : 'el-label muted'}>
-                        {el.type === 'text'
-                          ? `"${(el as TextElement).text}"`
-                          : el.type === 'pixels'
-                            ? `${(el as PixelsElement).pixels.length}px`
-                            : `(${el.x},${el.y})`}
-                      </span>
-                    </li>
-                  ))}
+                  {layer.elements.map((el) => {
+                    let label: string;
+                    if (el.type === 'text') label = `"${(el as TextElement).text}"`;
+                    else if (el.type === 'pixels') label = `${(el as PixelsElement).pixels.length}px`;
+                    else if (el.type === 'animationRef') {
+                      const anim = state.animations.find((a) => a.id === (el as AnimationRefElement).animationId);
+                      label = `ANIM: ${anim?.name ?? '?'}`;
+                    } else if (el.type === 'widgetRef') {
+                      const wgt = state.widgets.find((w) => w.id === (el as WidgetRefElement).widgetId);
+                      label = `WIDGET: ${wgt?.type ?? '?'}`;
+                    } else label = `(${el.x},${el.y})`;
+                    return (
+                      <li
+                        key={el.id}
+                        className={el.id === state.selectedId ? 'selected' : ''}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          dispatch({ type: 'SELECT_ELEMENT', payload: el.id });
+                          if (el.type === 'widgetRef') {
+                            dispatch({ type: 'SELECT_WIDGET', payload: (el as WidgetRefElement).widgetId });
+                          } else if (el.type === 'animationRef') {
+                            dispatch({ type: 'SELECT_ANIMATION', payload: (el as AnimationRefElement).animationId });
+                          } else {
+                            dispatch({ type: 'SELECT_WIDGET', payload: null });
+                          }
+                        }}
+                      >
+                        <span className={`el-type el-type-${el.type}`}>{el.type}</span>
+                        <span className={el.visible ? 'el-label' : 'el-label muted'}>{label}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </li>

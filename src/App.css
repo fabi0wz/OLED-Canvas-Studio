@@ -870,3 +870,49 @@ button:active {
   margin-top: 2px;
   opacity: 0.7;
 }
+
+/* --- Scene mode tabs (TopToolbar) ---------------------------------- */
+.mode-tabs { display: inline-flex; gap: 2px; margin-right: 12px; background: var(--bg-surface); border: 1px solid var(--border-bright); border-radius: 6px; padding: 2px; }
+.mode-tab { background: transparent; color: var(--text-dim); border: 0; padding: 3px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; border-radius: 4px; }
+.mode-tab:hover { color: var(--accent); }
+.mode-tab.mode-active { background: var(--accent); color: var(--bg-deep); font-weight: 600; }
+
+/* --- Playback controls --------------------------------------------- */
+.playback-controls { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; }
+.playback-controls button { background: var(--bg-surface); border: 1px solid var(--border-bright); color: var(--text); padding: 3px 8px; font-size: 12px; cursor: pointer; border-radius: 3px; }
+.playback-controls button:hover { color: var(--accent); border-color: var(--accent); }
+.playback-controls button.tool-active { background: var(--accent); color: var(--bg-deep); }
+.frame-indicator { font-size: 10px; color: var(--text-dim); margin-left: 4px; min-width: 32px; text-align: center; font-family: var(--mono, monospace); }
+
+/* --- Frame panel ---------------------------------------------------- */
+.frame-panel { padding: 6px 8px; display: flex; flex-direction: column; gap: 8px; }
+.frame-panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin: 0; }
+.frame-panel .row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.frame-panel input[type="text"], .frame-panel input[type="number"], .frame-panel select { background: var(--bg-deep); color: var(--text); border: 1px solid var(--border-bright); padding: 2px 4px; font-size: 11px; border-radius: 3px; }
+.frame-panel input[type="number"] { width: 56px; }
+.frame-panel label { font-size: 10px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+
+.frame-strip { display: flex; gap: 4px; overflow-x: auto; padding: 4px 2px; border: 1px solid var(--border-bright); background: var(--bg-deep); border-radius: 4px; min-height: 56px; }
+.frame-thumb { flex: 0 0 auto; width: 56px; min-height: 48px; padding: 3px; background: var(--bg-surface); border: 1px solid var(--border-bright); border-radius: 3px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 9px; color: var(--text-dim); }
+.frame-thumb:hover { border-color: var(--accent); }
+.frame-thumb.active { border-color: var(--accent); background: rgba(255,255,255,0.04); color: var(--accent); }
+.frame-thumb .frame-idx { font-weight: 600; font-size: 11px; color: var(--text); }
+.frame-thumb.active .frame-idx { color: var(--accent); }
+.frame-thumb .frame-count { font-size: 9px; }
+.frame-thumb .frame-dur { font-size: 9px; opacity: 0.7; }
+
+.onion-skin-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px dashed var(--border-bright); }
+.onion-skin-row input[type="range"] { flex: 1; }
+
+/* --- Widget palette / list ----------------------------------------- */
+.widget-panel { padding: 6px 8px; display: flex; flex-direction: column; gap: 8px; }
+.widget-panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin: 0; }
+.widget-palette { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+.widget-palette-btn { background: var(--bg-surface); border: 1px solid var(--border-bright); color: var(--text); padding: 6px 4px; font-size: 10px; cursor: pointer; border-radius: 3px; text-align: center; }
+.widget-palette-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.widget-list { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; }
+.widget-item { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-size: 11px; background: var(--bg-surface); border: 1px solid var(--border-bright); border-radius: 3px; cursor: pointer; }
+.widget-item.active { border-color: var(--accent); color: var(--accent); }
+.widget-item button { background: transparent; border: 0; color: var(--text-dim); cursor: pointer; padding: 0 4px; }
+.widget-item button:hover { color: var(--accent); }

@@ -58,7 +58,22 @@ export interface BitmapElement extends BaseElement {
   data: Uint8Array;
 }
 
-export type CanvasElement = TextElement | RectElement | LineElement | CircleElement | PixelsElement | BitmapElement;
+/** Layer-level reference to a frame animation. Its x/y mirror the animation's own offset. */
+export interface AnimationRefElement extends BaseElement {
+  type: 'animationRef';
+  animationId: string;
+}
+
+/** Layer-level reference to a procedural widget. Its x/y mirror the widget's own position. */
+export interface WidgetRefElement extends BaseElement {
+  type: 'widgetRef';
+  widgetId: string;
+}
+
+export type CanvasElement =
+  | TextElement | RectElement | LineElement | CircleElement
+  | PixelsElement | BitmapElement
+  | AnimationRefElement | WidgetRefElement;
 
 export interface Layer {
   id: string;
@@ -74,7 +89,124 @@ export interface Project {
   erasedPixels?: [number, number][];
   // Legacy support — old projects may only have a flat elements array
   elements?: CanvasElement[];
+  /** Frame-by-frame animations placed on the same scene. */
+  animations?: FrameAnimation[];
+  /** Procedural / data-driven widgets placed on the same scene. */
+  widgets?: ProceduralWidget[];
 }
+
+/* ---------- Frame animations ------------------------------------------- */
+
+export interface Frame {
+  id: string;
+  /** Frame display duration in milliseconds. */
+  durationMs: number;
+  /** Drawable content — uses the same primitive elements as static layers. */
+  elements: CanvasElement[];
+}
+
+export type AnimationPlayMode = 'loop' | 'once' | 'pingpong';
+
+export interface FrameAnimation {
+  id: string;
+  name: string;
+  visible: boolean;
+  /** Render offset applied to every frame (so an animation can be moved as a whole). */
+  x: number;
+  y: number;
+  frames: Frame[];
+  playMode: AnimationPlayMode;
+}
+
+/* ---------- Procedural widgets ----------------------------------------- */
+
+export type WidgetType =
+  | 'analogClock'
+  | 'digitalClock'
+  | 'progressBar'
+  | 'meter'
+  | 'gauge'
+  | 'battery';
+
+export type WidgetValueSource = 'sim' | 'time' | 'variable';
+
+export interface WidgetBase {
+  id: string;
+  name: string;
+  type: WidgetType;
+  visible: boolean;
+  x: number;
+  y: number;
+  /** Where the runtime value comes from: simulated, current time, or a named variable. */
+  valueSource: WidgetValueSource;
+  /** Name of the live variable (when valueSource === 'variable') — referenced from generated code. */
+  variableName?: string;
+  /** Simulated value used for editor preview. */
+  simValue: number;
+  /** Min / max numeric range for value-driven widgets. */
+  min: number;
+  max: number;
+}
+
+export interface AnalogClockWidget extends WidgetBase {
+  type: 'analogClock';
+  radius: number;
+  showTicks: boolean;
+  showSecondHand: boolean;
+}
+
+export interface DigitalClockWidget extends WidgetBase {
+  type: 'digitalClock';
+  font: string;
+  /** Format string with H/M/S tokens, e.g. "HH:MM:SS". */
+  format: string;
+}
+
+export interface ProgressBarWidget extends WidgetBase {
+  type: 'progressBar';
+  width: number;
+  height: number;
+  orientation: 'horizontal' | 'vertical';
+}
+
+export interface MeterWidget extends WidgetBase {
+  type: 'meter';
+  width: number;
+  height: number;
+  /** Number of tick segments. */
+  segments: number;
+}
+
+export interface GaugeWidget extends WidgetBase {
+  type: 'gauge';
+  radius: number;
+  /** Sweep arc in degrees. Needle starts at `-sweep/2` from straight up. */
+  sweepDeg: number;
+  showTicks: boolean;
+}
+
+export interface BatteryWidget extends WidgetBase {
+  type: 'battery';
+  width: number;
+  height: number;
+}
+
+export type ProceduralWidget =
+  | AnalogClockWidget
+  | DigitalClockWidget
+  | ProgressBarWidget
+  | MeterWidget
+  | GaugeWidget
+  | BatteryWidget;
+
+export const WIDGET_LABELS: Record<WidgetType, string> = {
+  analogClock: 'Analog Clock',
+  digitalClock: 'Digital Clock',
+  progressBar: 'Progress Bar',
+  meter: 'Meter',
+  gauge: 'Gauge',
+  battery: 'Battery',
+};
 
 export const DISPLAY_PRESETS: DisplayConfig[] = [
   { type: 'SSD1306_128x64', width: 128, height: 64 },

@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { useStore, snapCoord, getAllElements } from '../store';
-import type { CanvasElement, PixelsElement, TextElement, RectElement, LineElement, CircleElement } from '../types';
+import { useStore, snapCoord, getAllElements, getAllElementsForRender } from '../store';
+import type { CanvasElement, PixelsElement, TextElement, RectElement, LineElement, CircleElement, ProceduralWidget, FrameAnimation } from '../types';
 import { FONT_METRICS } from '../types';
 import {
   createBuffer, setPixel, clearPixel, renderBuffer,
@@ -9,10 +9,145 @@ import {
   drawCircle, drawThickCircle, drawDisc,
 } from '../pixelEngine';
 import { BITMAP_FONTS, type BitmapFont } from '../bitmapFonts';
+import { renderWidget, getWidgetBounds } from '../widgets';
 
 let idCounter = 0;
 function nextId(type: string) {
   return `${type}_${++idCounter}_${Date.now()}`;
+}
+
+/** Render a single CanvasElement into the given 1-bit buffer.
+ *  For AnimationRef and WidgetRef elements, the caller must provide lookups. */
+function renderElementIntoBuffer(
+  buf: Uint8Array,
+  dispW: number,
+  dispH: number,
+  el: CanvasElement,
+  lookups?: {
+    animations: FrameAnimation[];
+    widgets: ProceduralWidget[];
+    activeFrameId: string | null;
+  }
+) {
+  if (!el.visible) return;
+  if (el.type === 'animationRef') {
+    if (!lookups) return;
+    const anim = lookups.animations.find((a) => a.id === el.animationId);
+    if (!anim || !anim.visible || anim.frames.length === 0) return;
+    const frame = anim.frames.find((f) => f.id === lookups.activeFrameId) ?? anim.frames[0];
+    // anim.x/y is canonical; render its child elements with that offset baked
+    // into each child's x/y already (they're authored relative to the frame's
+    // 0,0 — the animation as a whole isn't currently x/y-offset, so render
+    // verbatim).
+    for (const child of frame.elements) {
+      renderElementIntoBuffer(buf, dispW, dispH, child, lookups);
+    }
+    return;
+  }
+  if (el.type === 'widgetRef') {
+    if (!lookups) return;
+    const wgt = lookups.widgets.find((w) => w.id === el.widgetId);
+    if (!wgt || !wgt.visible) return;
+    renderWidget(buf, dispW, dispH, wgt);
+    return;
+  }
+  const sw = el.strokeWidth || 1;
+  switch (el.type) {
+    case 'text': {
+      const font: BitmapFont = BITMAP_FONTS[el.font] || BITMAP_FONTS['u8g2_font_6x10_tr'];
+      if (!font) return;
+      const metrics = FONT_METRICS[el.font] || { width: font.width, height: font.height };
+      const tx = el.x;
+      const ty = el.y - font.baseline;
+      const writer = el.inverted ? clearPixel : setPixel;
+      for (let ci = 0; ci < el.text.length; ci++) {
+        const code = el.text.charCodeAt(ci);
+        const glyph = font.glyphs[code] || font.glyphs[63];
+        if (!glyph) continue;
+        for (let row = 0; row < glyph.length; row++) {
+          const bits = glyph[row];
+          for (let col = 0; col < font.width; col++) {
+            if (bits & (1 << (font.width - 1 - col))) {
+              writer(buf, dispW, dispH, tx + ci * metrics.width + col, ty + row);
+            }
+          }
+        }
+      }
+      return;
+    }
+    case 'rect': {
+      if (el.inverted) {
+        const tw = Math.max(1, el.width);
+        const th = Math.max(1, el.height);
+        const tmp = createBuffer(tw, th);
+        if (el.filled) drawBox(tmp, tw, th, 0, 0, tw, th);
+        else if (sw > 1) drawThickFrame(tmp, tw, th, 0, 0, tw, th, sw);
+        else drawFrame(tmp, tw, th, 0, 0, tw, th);
+        for (let row = 0; row < th; row++)
+          for (let col = 0; col < tw; col++)
+            if (tmp[row * tw + col]) clearPixel(buf, dispW, dispH, el.x + col, el.y + row);
+      } else {
+        if (el.filled) drawBox(buf, dispW, dispH, el.x, el.y, el.width, el.height);
+        else if (sw > 1) drawThickFrame(buf, dispW, dispH, el.x, el.y, el.width, el.height, sw);
+        else drawFrame(buf, dispW, dispH, el.x, el.y, el.width, el.height);
+      }
+      return;
+    }
+    case 'line': {
+      if (el.inverted) {
+        const minX = Math.min(el.x, el.x2);
+        const minY = Math.min(el.y, el.y2);
+        const maxX = Math.max(el.x, el.x2);
+        const maxY = Math.max(el.y, el.y2);
+        const tw = Math.max(1, maxX - minX + 1);
+        const th = Math.max(1, maxY - minY + 1);
+        const tmp = createBuffer(tw, th);
+        if (sw > 1) drawThickLine(tmp, tw, th, el.x - minX, el.y - minY, el.x2 - minX, el.y2 - minY, sw);
+        else drawLine(tmp, tw, th, el.x - minX, el.y - minY, el.x2 - minX, el.y2 - minY);
+        for (let row = 0; row < th; row++)
+          for (let col = 0; col < tw; col++)
+            if (tmp[row * tw + col]) clearPixel(buf, dispW, dispH, minX + col, minY + row);
+      } else {
+        if (sw > 1) drawThickLine(buf, dispW, dispH, el.x, el.y, el.x2, el.y2, sw);
+        else drawLine(buf, dispW, dispH, el.x, el.y, el.x2, el.y2);
+      }
+      return;
+    }
+    case 'circle': {
+      if (el.inverted) {
+        const r = Math.max(0, Math.round(el.radius));
+        const size = r * 2 + 1;
+        const tmp = createBuffer(size, size);
+        if (el.filled) drawDisc(tmp, size, size, r, r, r);
+        else if (sw > 1) drawThickCircle(tmp, size, size, r, r, r, sw);
+        else drawCircle(tmp, size, size, r, r, r);
+        for (let row = 0; row < size; row++)
+          for (let col = 0; col < size; col++)
+            if (tmp[row * size + col]) clearPixel(buf, dispW, dispH, el.x - r + col, el.y - r + row);
+      } else {
+        if (el.filled) drawDisc(buf, dispW, dispH, el.x, el.y, el.radius);
+        else if (sw > 1) drawThickCircle(buf, dispW, dispH, el.x, el.y, el.radius, sw);
+        else drawCircle(buf, dispW, dispH, el.x, el.y, el.radius);
+      }
+      return;
+    }
+    case 'pixels': {
+      for (const [px, py] of el.pixels) {
+        setPixel(buf, dispW, dispH, el.x + px, el.y + py);
+      }
+      return;
+    }
+    case 'bitmap': {
+      for (let row = 0; row < el.bmpHeight; row++) {
+        for (let col = 0; col < el.bmpWidth; col++) {
+          if (el.data[row * el.bmpWidth + col]) {
+            setPixel(buf, dispW, dispH, el.x + col, el.y + row);
+          }
+        }
+      }
+      return;
+    }
+  }
 }
 
 type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -40,7 +175,7 @@ export default function Canvas() {
   const { state, dispatch } = useStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const [dragging, setDragging] = useState<{ id: string; kind: 'element' | 'widget'; offsetX: number; offsetY: number } | null>(null);
   const [painting, setPainting] = useState(false);
   const [erasing, setErasing] = useState(false);
   const paintTargetRef = useRef<string | null>(null);
@@ -94,112 +229,15 @@ export default function Canvas() {
     }
 
     const buf = createBuffer(display.width, display.height);
+    const lookups = {
+      animations: state.animations,
+      widgets: state.widgets,
+      activeFrameId: state.editor.activeFrameId,
+    };
 
-    // Render layers (and their elements) in order
-    for (const layer of layers) {
-      if (!layer.visible) continue;
-      for (const el of layer.elements) {
-        if (!el.visible) continue;
-        const sw = el.strokeWidth || 1;
-        switch (el.type) {
-          case 'text': {
-            const font: BitmapFont = BITMAP_FONTS[el.font] || BITMAP_FONTS['u8g2_font_6x10_tr'];
-            if (!font) break;
-            const metrics = FONT_METRICS[el.font] || { width: font.width, height: font.height };
-            const tx = el.x;
-            // U8g2 y = baseline. Top of glyph = y - baseline.
-            const ty = el.y - font.baseline;
-            const writer = el.inverted ? clearPixel : setPixel;
-            for (let ci = 0; ci < el.text.length; ci++) {
-              const code = el.text.charCodeAt(ci);
-              const glyph = font.glyphs[code] || font.glyphs[63]; // fallback to '?'
-              if (!glyph) continue;
-              for (let row = 0; row < glyph.length; row++) {
-                const bits = glyph[row];
-                for (let col = 0; col < font.width; col++) {
-                  if (bits & (1 << (font.width - 1 - col))) {
-                    writer(buf, display.width, display.height, tx + ci * metrics.width + col, ty + row);
-                  }
-                }
-              }
-            }
-            break;
-          }
-          case 'rect': {
-            if (el.inverted) {
-              // Subtract mode: render to temp buffer, then clear those pixels from main buffer
-              const tw = Math.max(1, el.width);
-              const th = Math.max(1, el.height);
-              const tmp = createBuffer(tw, th);
-              if (el.filled) drawBox(tmp, tw, th, 0, 0, tw, th);
-              else if (sw > 1) drawThickFrame(tmp, tw, th, 0, 0, tw, th, sw);
-              else drawFrame(tmp, tw, th, 0, 0, tw, th);
-              for (let row = 0; row < th; row++)
-                for (let col = 0; col < tw; col++)
-                  if (tmp[row * tw + col]) clearPixel(buf, display.width, display.height, el.x + col, el.y + row);
-            } else {
-              if (el.filled) drawBox(buf, display.width, display.height, el.x, el.y, el.width, el.height);
-              else if (sw > 1) drawThickFrame(buf, display.width, display.height, el.x, el.y, el.width, el.height, sw);
-              else drawFrame(buf, display.width, display.height, el.x, el.y, el.width, el.height);
-            }
-            break;
-          }
-          case 'line': {
-            if (el.inverted) {
-              const minX = Math.min(el.x, el.x2);
-              const minY = Math.min(el.y, el.y2);
-              const maxX = Math.max(el.x, el.x2);
-              const maxY = Math.max(el.y, el.y2);
-              const tw = Math.max(1, maxX - minX + 1);
-              const th = Math.max(1, maxY - minY + 1);
-              const tmp = createBuffer(tw, th);
-              if (sw > 1) drawThickLine(tmp, tw, th, el.x - minX, el.y - minY, el.x2 - minX, el.y2 - minY, sw);
-              else drawLine(tmp, tw, th, el.x - minX, el.y - minY, el.x2 - minX, el.y2 - minY);
-              for (let row = 0; row < th; row++)
-                for (let col = 0; col < tw; col++)
-                  if (tmp[row * tw + col]) clearPixel(buf, display.width, display.height, minX + col, minY + row);
-            } else {
-              if (sw > 1) drawThickLine(buf, display.width, display.height, el.x, el.y, el.x2, el.y2, sw);
-              else drawLine(buf, display.width, display.height, el.x, el.y, el.x2, el.y2);
-            }
-            break;
-          }
-          case 'circle': {
-            if (el.inverted) {
-              const r = Math.max(0, Math.round(el.radius));
-              const size = r * 2 + 1;
-              const tmp = createBuffer(size, size);
-              if (el.filled) drawDisc(tmp, size, size, r, r, r);
-              else if (sw > 1) drawThickCircle(tmp, size, size, r, r, r, sw);
-              else drawCircle(tmp, size, size, r, r, r);
-              for (let row = 0; row < size; row++)
-                for (let col = 0; col < size; col++)
-                  if (tmp[row * size + col]) clearPixel(buf, display.width, display.height, el.x - r + col, el.y - r + row);
-            } else {
-              if (el.filled) drawDisc(buf, display.width, display.height, el.x, el.y, el.radius);
-              else if (sw > 1) drawThickCircle(buf, display.width, display.height, el.x, el.y, el.radius, sw);
-              else drawCircle(buf, display.width, display.height, el.x, el.y, el.radius);
-            }
-            break;
-          }
-          case 'pixels': {
-            for (const [px, py] of el.pixels) {
-              setPixel(buf, display.width, display.height, el.x + px, el.y + py);
-            }
-            break;
-          }
-          case 'bitmap': {
-            for (let row = 0; row < el.bmpHeight; row++) {
-              for (let col = 0; col < el.bmpWidth; col++) {
-                if (el.data[row * el.bmpWidth + col]) {
-                  setPixel(buf, display.width, display.height, el.x + col, el.y + row);
-                }
-              }
-            }
-            break;
-          }
-        }
-      }
+    // Render the unified element list (static layers + active animation frame).
+    for (const { element: el } of getAllElementsForRender(state)) {
+      renderElementIntoBuffer(buf, display.width, display.height, el, lookups);
     }
 
     // Apply eraser mask (clear pixels)
@@ -211,9 +249,31 @@ export default function Canvas() {
 
     renderBuffer(ctx, buf, display.width, display.height, zoom);
 
+    // Onion-skin overlay: prev/next frames of the active animation rendered
+    // in a separate buffer and composited at reduced opacity in tint colors.
+    if (state.editor.mode === 'animation' && state.editor.activeAnimationId) {
+      const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
+      if (anim && anim.frames.length > 1) {
+        const idx = anim.frames.findIndex((f) => f.id === state.editor.activeFrameId);
+        const overlays: { frameIdx: number; color: string }[] = [];
+        if (state.editor.onionPrev && idx > 0) overlays.push({ frameIdx: idx - 1, color: '#ff5b6b' });
+        if (state.editor.onionNext && idx >= 0 && idx < anim.frames.length - 1) overlays.push({ frameIdx: idx + 1, color: '#5bd0ff' });
+        for (const ov of overlays) {
+          const ofb = createBuffer(display.width, display.height);
+          for (const el of anim.frames[ov.frameIdx].elements) {
+            renderElementIntoBuffer(ofb, display.width, display.height, el, lookups);
+          }
+          ctx.save();
+          ctx.globalAlpha = state.editor.onionOpacity;
+          renderBuffer(ctx, ofb, display.width, display.height, zoom, ov.color);
+          ctx.restore();
+        }
+      }
+    }
+
     // Selection highlight + resize handles
     if (selectedId) {
-      const sel = getAllElements(state).find((e) => e.element.id === selectedId)?.element;
+      const sel = findElementById(selectedId);
       if (sel) {
         const b = getElementBounds(sel);
         ctx.strokeStyle = '#ffb627';
@@ -222,7 +282,7 @@ export default function Canvas() {
         ctx.strokeRect(b.x * zoom - 2, b.y * zoom - 2, b.w * zoom + 4, b.h * zoom + 4);
         ctx.setLineDash([]);
 
-        if (state.activeTool === 'select' && sel.type !== 'text' && sel.type !== 'pixels') {
+        if (state.activeTool === 'select' && sel.type !== 'text' && sel.type !== 'pixels' && sel.type !== 'animationRef' && sel.type !== 'widgetRef') {
           const handles = getHandlePositions(b);
           const sz = 7;
           ctx.lineWidth = 1;
@@ -239,6 +299,19 @@ export default function Canvas() {
       }
     }
 
+    // Widget selection outline (cyan to distinguish from element selection).
+    if (state.editor.selectedWidgetId) {
+      const wgt = state.widgets.find((w) => w.id === state.editor.selectedWidgetId);
+      if (wgt) {
+        const b = getWidgetBounds(wgt);
+        ctx.strokeStyle = '#5bd0ff';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(b.x * zoom - 2, b.y * zoom - 2, b.w * zoom + 4, b.h * zoom + 4);
+        ctx.setLineDash([]);
+      }
+    }
+
     if (state.activeTool === 'eraser' && mousePixel) {
       ctx.fillStyle = 'rgba(255, 91, 107, 0.55)';
       ctx.fillRect(mousePixel.x * zoom, mousePixel.y * zoom, zoom, zoom);
@@ -246,6 +319,40 @@ export default function Canvas() {
   }, [layers, selectedId, showGrid, snapSize, zoom, display, w, h, state, erasedPixels, mousePixel, hoverHandle, resizing]);
 
   useEffect(() => { draw(); }, [draw]);
+
+  // Frame-animation playback ticker (per-frame duration honored).
+  useEffect(() => {
+    if (!state.editor.playing) return;
+    const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
+    if (!anim || anim.frames.length < 2) return;
+    const idx = anim.frames.findIndex((f) => f.id === state.editor.activeFrameId);
+    const cur = idx >= 0 ? idx : 0;
+    const curFrame = anim.frames[cur];
+    const dur = Math.max(16, curFrame.durationMs);
+    const t = setTimeout(() => {
+      let next: number;
+      if (anim.playMode === 'once') {
+        next = cur + 1;
+        if (next >= anim.frames.length) { dispatch({ type: 'SET_PLAYING', payload: false }); return; }
+      } else if (anim.playMode === 'pingpong') {
+        // Encode direction via a ref-less approach: ping-pong by even iteration index using current id only.
+        next = (cur + 1) % anim.frames.length;
+      } else {
+        next = (cur + 1) % anim.frames.length;
+      }
+      dispatch({ type: 'SELECT_FRAME', payload: { animationId: anim.id, frameId: anim.frames[next].id } });
+    }, dur);
+    return () => clearTimeout(t);
+  }, [state.editor.playing, state.editor.activeFrameId, state.editor.activeAnimationId, state.animations, dispatch]);
+
+  // Tick clocks/time-driven widgets once a second so they animate live.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const hasTimeWidget = state.widgets.some((w) => w.valueSource === 'time' && (w.type === 'analogClock' || w.type === 'digitalClock'));
+    if (!hasTimeWidget) return;
+    const i = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(i);
+  }, [state.widgets]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -263,7 +370,8 @@ export default function Canvas() {
         case 'i': document.querySelector<HTMLInputElement>('input[type="file"][accept="image/*"]')?.click(); break;
         case 'delete':
         case 'backspace':
-          if (state.selectedId) dispatch({ type: 'DELETE_ELEMENT', payload: state.selectedId });
+          if (state.editor.selectedWidgetId) dispatch({ type: 'DELETE_WIDGET', payload: state.editor.selectedWidgetId });
+          else if (state.selectedId) dispatch({ type: 'DELETE_ELEMENT', payload: state.selectedId });
           break;
       }
     }
@@ -317,6 +425,17 @@ export default function Canvas() {
       }
       case 'bitmap':
         return { x: el.x, y: el.y, w: el.bmpWidth, h: el.bmpHeight };
+      case 'animationRef': {
+        const anim = state.animations.find((a) => a.id === el.animationId);
+        if (!anim) return { x: el.x, y: el.y, w: 1, h: 1 };
+        // Use display-sized bounds; the animation occupies the whole frame.
+        return { x: el.x, y: el.y, w: display.width, h: display.height };
+      }
+      case 'widgetRef': {
+        const wgt = state.widgets.find((w) => w.id === el.widgetId);
+        if (!wgt) return { x: el.x, y: el.y, w: 1, h: 1 };
+        return getWidgetBounds(wgt);
+      }
     }
   }
 
@@ -334,10 +453,22 @@ export default function Canvas() {
     return { x: snapCoord(x, snapSize), y: snapCoord(y, snapSize) };
   }
 
+  /** Look up an element by id across layers AND the active animation frame. */
+  function findElementById(id: string): CanvasElement | undefined {
+    const fromLayers = getAllElements(state).find((x) => x.element.id === id)?.element;
+    if (fromLayers) return fromLayers;
+    if (state.editor.mode === 'animation') {
+      const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
+      const frame = anim?.frames.find((f) => f.id === state.editor.activeFrameId);
+      return frame?.elements.find((e) => e.id === id);
+    }
+    return undefined;
+  }
+
   function hitTestHandle(clientX: number, clientY: number): HandleId | null {
     if (state.activeTool !== 'select' || !selectedId) return null;
-    const sel = getAllElements(state).find((x) => x.element.id === selectedId)?.element;
-    if (!sel || sel.type === 'text' || sel.type === 'pixels') return null;
+    const sel = findElementById(selectedId);
+    if (!sel || sel.type === 'text' || sel.type === 'pixels' || sel.type === 'animationRef' || sel.type === 'widgetRef') return null;
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
@@ -366,6 +497,26 @@ export default function Canvas() {
     }
     return null;
   }
+
+  function hitTestFrameElement(px: number, py: number): CanvasElement | null {
+    if (state.editor.mode !== 'animation') return null;
+    const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
+    const frame = anim?.frames.find((f) => f.id === state.editor.activeFrameId);
+    if (!frame) return null;
+    for (let i = frame.elements.length - 1; i >= 0; i--) {
+      const el = frame.elements[i];
+      if (!el.visible) continue;
+      const b = getElementBounds(el);
+      if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return el;
+    }
+    return null;
+  }
+
+  function hitTestWidget(_px: number, _py: number): ProceduralWidget | null {
+    // Deprecated: widgets are now picked up via widgetRef elements in layers.
+    return null;
+  }
+  void hitTestWidget;
 
   function addElementAtPosition(px: number, py: number) {
     const tool = state.activeTool;
@@ -408,7 +559,7 @@ export default function Canvas() {
 
   function updateCreatingElement(curPx: number, curPy: number, shift: boolean) {
     if (!creating) return;
-    const el = getAllElements(state).find((x) => x.element.id === creating.id)?.element;
+    const el = findElementById(creating.id);
     if (!el) return;
 
     let endX = curPx;
@@ -480,7 +631,7 @@ export default function Canvas() {
     if (state.activeTool === 'select' && selectedId) {
       const handle = hitTestHandle(e.clientX, e.clientY);
       if (handle) {
-        const sel = getAllElements(state).find((x) => x.element.id === selectedId)?.element;
+        const sel = findElementById(selectedId);
         if (sel) {
           setResizing({
             id: sel.id,
@@ -506,7 +657,7 @@ export default function Canvas() {
 
     if (state.activeTool === 'freedraw') {
       const target = state.selectedId
-        ? getAllElements(state).find((e) => e.element.id === state.selectedId && e.element.type === 'pixels')?.element as PixelsElement | undefined
+        ? (findElementById(state.selectedId)?.type === 'pixels' ? findElementById(state.selectedId) as PixelsElement : undefined)
         : undefined;
 
       if (!target) {
@@ -529,11 +680,26 @@ export default function Canvas() {
     }
 
     const hit = hitTest(raw.px, raw.py);
-    if (hit) {
+    // Priority: active-frame element (anim mode) > layer element. Widgets and
+    // animations are now picked up by hitTest via their ref elements in the
+    // layer stack.
+    const frameHit = hitTestFrameElement(raw.px, raw.py);
+    if (frameHit) {
+      dispatch({ type: 'SELECT_ELEMENT', payload: frameHit.id });
+      setDragging({ id: frameHit.id, kind: 'element', offsetX: raw.px - frameHit.x, offsetY: raw.py - frameHit.y });
+    } else if (hit) {
+      // If the hit is a widgetRef, also focus the underlying widget so the
+      // properties panel shows widget editors.
+      if (hit.type === 'widgetRef') {
+        dispatch({ type: 'SELECT_WIDGET', payload: hit.widgetId });
+      } else {
+        dispatch({ type: 'SELECT_WIDGET', payload: null });
+      }
       dispatch({ type: 'SELECT_ELEMENT', payload: hit.id });
-      setDragging({ id: hit.id, offsetX: raw.px - hit.x, offsetY: raw.py - hit.y });
+      setDragging({ id: hit.id, kind: 'element', offsetX: raw.px - hit.x, offsetY: raw.py - hit.y });
     } else {
       dispatch({ type: 'SELECT_ELEMENT', payload: null });
+      dispatch({ type: 'SELECT_WIDGET', payload: null });
     }
   }
 
@@ -562,7 +728,7 @@ export default function Canvas() {
 
     if (resizing) {
       const { handle, startBounds, id } = resizing;
-      const sel = getAllElements(state).find((x) => x.element.id === id)?.element;
+      const sel = findElementById(id);
 
       // Circles resize around their fixed centre so the shape never drifts.
       if (sel && sel.type === 'circle') {
@@ -614,7 +780,7 @@ export default function Canvas() {
     }
 
     if (painting && paintTargetRef.current) {
-      const target = getAllElements(state).find((e) => e.element.id === paintTargetRef.current)?.element;
+      const target = paintTargetRef.current ? findElementById(paintTargetRef.current) : undefined;
       if (target && target.type === 'pixels') {
         dispatch({ type: 'ADD_PIXELS', payload: { id: target.id, pixels: [[raw.px - target.x, raw.py - target.y]] } });
       }
@@ -626,8 +792,23 @@ export default function Canvas() {
     const newX = snapped.x;
     const newY = snapped.y;
 
-    const el = getAllElements(state).find((e) => e.element.id === dragging.id)?.element;
+    if (dragging.kind === 'widget') {
+      dispatch({ type: 'MOVE_WIDGET', payload: { id: dragging.id, x: newX, y: newY } });
+      return;
+    }
+
+    const el = findElementById(dragging.id);
     if (!el) return;
+
+    if (el.type === 'widgetRef') {
+      dispatch({ type: 'MOVE_WIDGET', payload: { id: el.widgetId, x: newX, y: newY } });
+      return;
+    }
+
+    if (el.type === 'animationRef') {
+      dispatch({ type: 'UPDATE_ANIMATION', payload: { id: el.animationId, changes: { x: newX, y: newY } } });
+      return;
+    }
 
     if (el.type === 'line') {
       const dx = newX - el.x;
@@ -645,7 +826,7 @@ export default function Canvas() {
     if (creating) {
       // If the user just clicked without dragging, give the shape a sensible
       // default size so the click still produces a visible element.
-      const el = getAllElements(state).find((x) => x.element.id === creating.id)?.element;
+      const el = findElementById(creating.id);
       if (el) {
         if (el.type === 'rect' && (el.width < 2 && el.height < 2)) {
           dispatch({ type: 'UPDATE_ELEMENT', payload: { ...el, width: 30, height: 20 } });

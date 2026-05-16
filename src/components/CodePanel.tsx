@@ -10,6 +10,8 @@ export default function CodePanel() {
     display: state.display,
     layers: state.layers,
     erasedPixels: state.erasedPixels,
+    animations: state.animations,
+    widgets: state.widgets,
   });
 
   function handleCopy() {
@@ -34,6 +36,8 @@ export default function CodePanel() {
       display: state.display,
       layers: state.layers,
       erasedPixels: state.erasedPixels,
+      animations: state.animations,
+      widgets: state.widgets,
     }, (_key, value) => {
       // Serialize Uint8Array as regular arrays for JSON compatibility
       if (value instanceof Uint8Array) return Array.from(value);
@@ -61,15 +65,18 @@ export default function CodePanel() {
           const data = JSON.parse(ev.target?.result as string);
           // Accept both new (layers) and legacy (elements) format
           if (data.display && (data.layers || data.elements)) {
-            // Restore Uint8Array for bitmap elements
-            const layers = data.layers || [];
-            for (const l of layers) {
-              for (const el of l.elements || []) {
-                if (el.type === 'bitmap' && Array.isArray(el.data)) {
-                  el.data = new Uint8Array(el.data);
+            // Restore Uint8Array for bitmap elements (including those inside animation frames)
+            const restoreInLayers = (arr: { elements?: { type?: string; data?: unknown }[] }[]) => {
+              for (const l of arr || []) {
+                for (const el of l.elements || []) {
+                  if (el.type === 'bitmap' && Array.isArray(el.data)) {
+                    (el as { data: Uint8Array }).data = new Uint8Array(el.data as number[]);
+                  }
                 }
               }
-            }
+            };
+            restoreInLayers(data.layers || []);
+            for (const a of data.animations || []) restoreInLayers(a.frames || []);
             dispatch({ type: 'LOAD_PROJECT', payload: data });
           } else {
             alert('Invalid project file.');

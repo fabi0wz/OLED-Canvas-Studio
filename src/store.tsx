@@ -1,6 +1,11 @@
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from 'react';
-import type { CanvasElement, DisplayConfig, Project, Layer } from './types';
+import type {
+  CanvasElement, DisplayConfig, Project, Layer,
+  FrameAnimation, Frame, ProceduralWidget, WidgetType,
+  AnimationRefElement, WidgetRefElement,
+} from './types';
 import { DISPLAY_PRESETS } from './types';
+import { makeDefaultWidget } from './widgets';
 import {
   createBuffer,
   drawBox,
@@ -15,6 +20,23 @@ import {
 
 export type ActiveTool = 'select' | 'freedraw' | 'eraser' | 'add-text' | 'add-rect' | 'add-line' | 'add-circle' | 'add-bitmap';
 
+export type SceneMode = 'static' | 'animation' | 'widgets';
+
+export interface EditorState {
+  mode: SceneMode;
+  /** Currently edited animation / frame (animation mode only). */
+  activeAnimationId: string | null;
+  activeFrameId: string | null;
+  /** Onion-skin overlay controls. */
+  onionPrev: boolean;
+  onionNext: boolean;
+  onionOpacity: number; // 0..1
+  /** Playback state for the active animation. */
+  playing: boolean;
+  /** Currently selected widget (separate from element selection). */
+  selectedWidgetId: string | null;
+}
+
 interface AppState {
   display: DisplayConfig;
   layers: Layer[];
@@ -26,6 +48,9 @@ interface AppState {
   snapSize: number; // 0 = off
   zoom: number;
   activeTool: ActiveTool;
+  animations: FrameAnimation[];
+  widgets: ProceduralWidget[];
+  editor: EditorState;
 }
 
 type Action =
@@ -54,10 +79,49 @@ type Action =
   | { type: 'TOGGLE_LAYER_VISIBLE'; payload: string }
   | { type: 'SELECT_LAYER'; payload: string }
   | { type: 'REORDER_LAYER'; payload: { id: string; direction: 'up' | 'down' } }
-  | { type: 'MOVE_ELEMENT_TO_LAYER'; payload: { elementId: string; layerId: string } };
+  | { type: 'MOVE_ELEMENT_TO_LAYER'; payload: { elementId: string; layerId: string } }
+  // Scene / editor mode
+  | { type: 'SET_SCENE_MODE'; payload: SceneMode }
+  | { type: 'SET_ONION'; payload: Partial<Pick<EditorState, 'onionPrev' | 'onionNext' | 'onionOpacity'>> }
+  | { type: 'SET_PLAYING'; payload: boolean }
+  // Frame animations
+  | { type: 'ADD_ANIMATION'; payload?: { name?: string } }
+  | { type: 'DELETE_ANIMATION'; payload: string }
+  | { type: 'RENAME_ANIMATION'; payload: { id: string; name: string } }
+  | { type: 'TOGGLE_ANIMATION_VISIBLE'; payload: string }
+  | { type: 'SELECT_ANIMATION'; payload: string }
+  | { type: 'UPDATE_ANIMATION'; payload: { id: string; changes: Partial<FrameAnimation> } }
+  | { type: 'ADD_FRAME'; payload: { animationId: string } }
+  | { type: 'DUPLICATE_FRAME'; payload: { animationId: string; frameId: string } }
+  | { type: 'DELETE_FRAME'; payload: { animationId: string; frameId: string } }
+  | { type: 'REORDER_FRAME'; payload: { animationId: string; frameId: string; direction: 'left' | 'right' } }
+  | { type: 'SELECT_FRAME'; payload: { animationId: string; frameId: string } }
+  | { type: 'UPDATE_FRAME'; payload: { animationId: string; frameId: string; changes: Partial<Frame> } }
+  // Widgets
+  | { type: 'ADD_WIDGET'; payload: { widgetType: WidgetType } }
+  | { type: 'UPDATE_WIDGET'; payload: ProceduralWidget }
+  | { type: 'DELETE_WIDGET'; payload: string }
+  | { type: 'SELECT_WIDGET'; payload: string | null }
+  | { type: 'MOVE_WIDGET'; payload: { id: string; x: number; y: number } };
 
 function makeLayer(name: string, elements: CanvasElement[] = []): Layer {
   return { id: `layer_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name, visible: true, elements };
+}
+
+function uid(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function makeFrame(): Frame {
+  return { id: uid('frame'), durationMs: 120, elements: [] };
+}
+
+function makeAnimation(name: string): FrameAnimation {
+  return {
+    id: uid('anim'), name, visible: true, x: 0, y: 0,
+    playMode: 'loop',
+    frames: [makeFrame()],
+  };
 }
 
 const defaultLayer = makeLayer('main');
@@ -72,9 +136,39 @@ const initialState: AppState = {
   snapSize: 0,
   zoom: 3,
   activeTool: 'select',
+  animations: [],
+  widgets: [],
+  editor: {
+    mode: 'static',
+    activeAnimationId: null,
+    activeFrameId: null,
+    onionPrev: true,
+    onionNext: false,
+    onionOpacity: 0.35,
+    playing: false,
+    selectedWidgetId: null,
+  },
 };
 
 // --- helpers ---------------------------------------------------------------
+
+/** Insert a layer-level reference element into the selected (or first) layer. */
+function addRefToActiveLayer(layers: Layer[], selectedLayerId: string, ref: CanvasElement): Layer[] {
+  const targetId = layers.find((l) => l.id === selectedLayerId)?.id ?? layers[0]?.id;
+  if (!targetId) return layers;
+  return layers.map((l) => l.id === targetId ? { ...l, elements: [...l.elements, ref] } : l);
+}
+
+/** Strip any AnimationRef/WidgetRef elements that point at the given id from every layer and frame. */
+function stripRefs(state: AppState, kind: 'animationRef' | 'widgetRef', targetId: string): { layers: Layer[]; animations: FrameAnimation[] } {
+  const filter = (els: CanvasElement[]) => els.filter((e) =>
+    !(e.type === kind && (e.type === 'animationRef' ? e.animationId === targetId : (e as WidgetRefElement).widgetId === targetId))
+  );
+  return {
+    layers: state.layers.map((l) => ({ ...l, elements: filter(l.elements) })),
+    animations: state.animations.map((a) => ({ ...a, frames: a.frames.map((f) => ({ ...f, elements: filter(f.elements) })) })),
+  };
+}
 
 /** Map elements inside a specific layer */
 function mapElementsInLayer(
@@ -85,20 +179,80 @@ function mapElementsInLayer(
   return layers.map((l) => (l.id === layerId ? { ...l, elements: fn(l.elements) } : l));
 }
 
-/** Map elements in any layer (used when we know the id but not the layer) */
-function mapAllElements(
+/** Map every element in every layer. */
+function mapAllLayerElements(
   layers: Layer[],
   fn: (el: CanvasElement, layer: Layer) => CanvasElement
 ): Layer[] {
   return layers.map((l) => ({ ...l, elements: l.elements.map((el) => fn(el, l)) }));
 }
 
-function findElement(layers: Layer[], id: string): { element: CanvasElement; layer: Layer } | null {
-  for (const l of layers) {
+/** Map every element in every frame of every animation. */
+function mapAllFrameElements(
+  animations: FrameAnimation[],
+  fn: (el: CanvasElement, frame: Frame, animation: FrameAnimation) => CanvasElement
+): FrameAnimation[] {
+  return animations.map((a) => ({
+    ...a,
+    frames: a.frames.map((f) => ({ ...f, elements: f.elements.map((el) => fn(el, f, a)) })),
+  }));
+}
+
+/** Apply the same per-element transform across both static layers and animation frames. */
+function mapAllElements(
+  state: AppState,
+  fn: (el: CanvasElement) => CanvasElement,
+): { layers: Layer[]; animations: FrameAnimation[] } {
+  return {
+    layers: mapAllLayerElements(state.layers, fn),
+    animations: mapAllFrameElements(state.animations, fn),
+  };
+}
+
+/** Find an element by id, searching static layers then animation frames. */
+function findElement(state: AppState, id: string):
+  | { kind: 'layer'; element: CanvasElement; layer: Layer }
+  | { kind: 'frame'; element: CanvasElement; animation: FrameAnimation; frame: Frame }
+  | null {
+  for (const l of state.layers) {
     const el = l.elements.find((e) => e.id === id);
-    if (el) return { element: el, layer: l };
+    if (el) return { kind: 'layer', element: el, layer: l };
+  }
+  for (const a of state.animations) {
+    for (const f of a.frames) {
+      const el = f.elements.find((e) => e.id === id);
+      if (el) return { kind: 'frame', element: el, animation: a, frame: f };
+    }
   }
   return null;
+}
+
+/** Push a new element into the currently active container (layer or frame). */
+function addElementToActiveContainer(state: AppState, el: CanvasElement): Partial<AppState> {
+  if (state.editor.mode === 'animation' && state.editor.activeAnimationId && state.editor.activeFrameId) {
+    return {
+      animations: state.animations.map((a) =>
+        a.id !== state.editor.activeAnimationId ? a : {
+          ...a,
+          frames: a.frames.map((f) => f.id !== state.editor.activeFrameId ? f : { ...f, elements: [...f.elements, el] }),
+        }
+      ),
+    };
+  }
+  const targetLayer = state.layers.find((l) => l.id === state.selectedLayerId) ?? state.layers[0];
+  return { layers: mapElementsInLayer(state.layers, targetLayer.id, (els) => [...els, el]) };
+}
+
+/** Elements currently visible for hit testing in the active editing context. */
+function getEditableElementsInOrder(state: AppState): CanvasElement[] {
+  if (state.editor.mode === 'animation' && state.editor.activeAnimationId && state.editor.activeFrameId) {
+    const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
+    const frame = anim?.frames.find((f) => f.id === state.editor.activeFrameId);
+    return frame ? frame.elements : [];
+  }
+  const out: CanvasElement[] = [];
+  for (const l of state.layers) for (const e of l.elements) out.push(e);
+  return out;
 }
 
 function collectPixels(buf: Uint8Array, width: number, height: number): [number, number][] {
@@ -335,53 +489,58 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, display: action.payload };
 
     case 'ADD_ELEMENT': {
-      const targetLayer = state.layers.find((l) => l.id === state.selectedLayerId) ?? state.layers[0];
-      return {
-        ...state,
-        layers: mapElementsInLayer(state.layers, targetLayer.id, (els) => [...els, action.payload]),
-        selectedId: action.payload.id,
-      };
+      const patch = addElementToActiveContainer(state, action.payload);
+      return { ...state, ...patch, selectedId: action.payload.id, editor: { ...state.editor, selectedWidgetId: null } };
     }
 
-    case 'UPDATE_ELEMENT':
-      return {
-        ...state,
-        layers: mapAllElements(state.layers, (el) =>
-          el.id === action.payload.id ? (action.payload as CanvasElement) : el
-        ),
-      };
+    case 'UPDATE_ELEMENT': {
+      const { layers, animations } = mapAllElements(state, (el) =>
+        el.id === action.payload.id ? (action.payload as CanvasElement) : el
+      );
+      return { ...state, layers, animations };
+    }
 
-    case 'DELETE_ELEMENT':
+    case 'DELETE_ELEMENT': {
+      const layers = state.layers.map((l) => ({ ...l, elements: l.elements.filter((el) => el.id !== action.payload) }));
+      const animations = state.animations.map((a) => ({
+        ...a,
+        frames: a.frames.map((f) => ({ ...f, elements: f.elements.filter((el) => el.id !== action.payload) })),
+      }));
       return {
-        ...state,
-        layers: state.layers.map((l) => ({
-          ...l,
-          elements: l.elements.filter((el) => el.id !== action.payload),
-        })),
+        ...state, layers, animations,
         selectedId: state.selectedId === action.payload ? null : state.selectedId,
       };
+    }
 
     case 'SELECT_ELEMENT': {
       if (action.payload == null) return { ...state, selectedId: null };
-      const found = findElement(state.layers, action.payload);
+      const found = findElement(state, action.payload);
+      // When selecting a widgetRef, preserve selectedWidgetId so the
+      // PropertiesPanel keeps showing widget editors.
+      const el = found?.kind === 'layer'
+        ? found.layer.elements.find((e) => e.id === action.payload)
+        : undefined;
+      const keepWidget = el?.type === 'widgetRef'
+        ? (el as WidgetRefElement).widgetId
+        : null;
       return {
         ...state,
         selectedId: action.payload,
-        selectedLayerId: found ? found.layer.id : state.selectedLayerId,
+        selectedLayerId: found && found.kind === 'layer' ? found.layer.id : state.selectedLayerId,
+        editor: { ...state.editor, selectedWidgetId: keepWidget },
       };
     }
 
-    case 'MOVE_ELEMENT':
-      return {
-        ...state,
-        layers: mapAllElements(state.layers, (el) => {
-          if (el.id !== action.payload.id) return el;
-          if (el.type === 'line' && action.payload.x2 !== undefined && action.payload.y2 !== undefined) {
-            return { ...el, x: action.payload.x, y: action.payload.y, x2: action.payload.x2, y2: action.payload.y2 };
-          }
-          return { ...el, x: action.payload.x, y: action.payload.y };
-        }),
-      };
+    case 'MOVE_ELEMENT': {
+      const { layers, animations } = mapAllElements(state, (el) => {
+        if (el.id !== action.payload.id) return el;
+        if (el.type === 'line' && action.payload.x2 !== undefined && action.payload.y2 !== undefined) {
+          return { ...el, x: action.payload.x, y: action.payload.y, x2: action.payload.x2, y2: action.payload.y2 };
+        }
+        return { ...el, x: action.payload.x, y: action.payload.y };
+      });
+      return { ...state, layers, animations };
+    }
 
     case 'TOGGLE_GRID':
       return { ...state, showGrid: !state.showGrid };
@@ -403,39 +562,74 @@ function reducer(state: AppState, action: Action): AppState {
       } else {
         layers = [makeLayer('main')];
       }
+      const animations = p.animations ?? [];
+      const widgets = p.widgets ?? [];
       return {
         ...state,
         display: p.display,
         layers,
+        animations,
+        widgets,
         selectedLayerId: layers[0].id,
         selectedId: null,
         erasedPixels: p.erasedPixels ?? [],
+        editor: {
+          ...state.editor,
+          activeAnimationId: animations[0]?.id ?? null,
+          activeFrameId: animations[0]?.frames[0]?.id ?? null,
+          selectedWidgetId: null,
+          playing: false,
+        },
       };
     }
 
     case 'REORDER_ELEMENT': {
-      const found = findElement(state.layers, action.payload.id);
+      const found = findElement(state, action.payload.id);
       if (!found) return state;
-      const layer = found.layer;
-      const idx = layer.elements.findIndex((el) => el.id === action.payload.id);
+      if (found.kind === 'layer') {
+        const layer = found.layer;
+        const idx = layer.elements.findIndex((el) => el.id === action.payload.id);
+        const swap = action.payload.direction === 'up' ? idx - 1 : idx + 1;
+        if (swap < 0 || swap >= layer.elements.length) return state;
+        const newElements = [...layer.elements];
+        [newElements[idx], newElements[swap]] = [newElements[swap], newElements[idx]];
+        return {
+          ...state,
+          layers: state.layers.map((l) => (l.id === layer.id ? { ...l, elements: newElements } : l)),
+        };
+      }
+      // frame container
+      const { animation, frame } = found;
+      const idx = frame.elements.findIndex((el) => el.id === action.payload.id);
       const swap = action.payload.direction === 'up' ? idx - 1 : idx + 1;
-      if (swap < 0 || swap >= layer.elements.length) return state;
-      const newElements = [...layer.elements];
-      [newElements[idx], newElements[swap]] = [newElements[swap], newElements[idx]];
+      if (swap < 0 || swap >= frame.elements.length) return state;
+      const newEls = [...frame.elements];
+      [newEls[idx], newEls[swap]] = [newEls[swap], newEls[idx]];
       return {
         ...state,
-        layers: state.layers.map((l) => (l.id === layer.id ? { ...l, elements: newElements } : l)),
+        animations: state.animations.map((a) => a.id !== animation.id ? a : {
+          ...a, frames: a.frames.map((f) => f.id !== frame.id ? f : { ...f, elements: newEls }),
+        }),
       };
     }
 
     case 'DUPLICATE_ELEMENT': {
-      const found = findElement(state.layers, action.payload);
+      const found = findElement(state, action.payload);
       if (!found) return state;
       const source = found.element;
       const newEl = { ...source, id: `${source.type}_${Date.now()}`, x: source.x + 5, y: source.y + 5 };
+      if (found.kind === 'layer') {
+        return {
+          ...state,
+          layers: mapElementsInLayer(state.layers, found.layer.id, (els) => [...els, newEl]),
+          selectedId: newEl.id,
+        };
+      }
       return {
         ...state,
-        layers: mapElementsInLayer(state.layers, found.layer.id, (els) => [...els, newEl]),
+        animations: state.animations.map((a) => a.id !== found.animation.id ? a : {
+          ...a, frames: a.frames.map((f) => f.id !== found.frame.id ? f : { ...f, elements: [...f.elements, newEl] }),
+        }),
         selectedId: newEl.id,
       };
     }
@@ -444,19 +638,54 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, activeTool: action.payload };
 
     case 'ADD_PIXELS': {
-      return {
-        ...state,
-        layers: mapAllElements(state.layers, (el) => {
-          if (el.id !== action.payload.id || el.type !== 'pixels') return el;
-          const existing = new Set(el.pixels.map(([px, py]) => `${px},${py}`));
-          const newPixels = action.payload.pixels.filter(([px, py]) => !existing.has(`${px},${py}`));
-          return { ...el, pixels: [...el.pixels, ...newPixels] };
-        }),
+      const apply = (el: CanvasElement): CanvasElement => {
+        if (el.id !== action.payload.id || el.type !== 'pixels') return el;
+        const existing = new Set(el.pixels.map(([px, py]) => `${px},${py}`));
+        const newPixels = action.payload.pixels.filter(([px, py]) => !existing.has(`${px},${py}`));
+        return { ...el, pixels: [...el.pixels, ...newPixels] };
       };
+      const { layers, animations } = mapAllElements(state, apply);
+      return { ...state, layers, animations };
     }
 
     case 'ERASE_PIXEL': {
       const { x, y } = action.payload;
+
+      // Animation mode: operate within the active frame only.
+      if (state.editor.mode === 'animation' && state.editor.activeAnimationId && state.editor.activeFrameId) {
+        const animIdx = state.animations.findIndex((a) => a.id === state.editor.activeAnimationId);
+        if (animIdx < 0) return state;
+        const anim = state.animations[animIdx];
+        const frameIdx = anim.frames.findIndex((f) => f.id === state.editor.activeFrameId);
+        if (frameIdx < 0) return state;
+        const frame = anim.frames[frameIdx];
+        const newEls = [...frame.elements];
+        for (let ei = newEls.length - 1; ei >= 0; ei--) {
+          const el = newEls[ei];
+          if (!el.visible) continue;
+          if (el.type === 'pixels') {
+            const filtered = el.pixels.filter(([px, py]) => (el.x + px) !== x || (el.y + py) !== y);
+            if (filtered.length === el.pixels.length) continue;
+            newEls[ei] = { ...el, pixels: filtered };
+            break;
+          }
+          const raster = rasterizeElementToPixels(el);
+          if (!raster) continue;
+          const hit = raster.pixels.some(([px, py]) => raster.x + px === x && raster.y + py === y);
+          if (!hit) continue;
+          const nextPixels = raster.pixels.filter(([px, py]) => raster.x + px !== x || raster.y + py !== y);
+          newEls[ei] = {
+            id: el.id, type: 'pixels', x: raster.x, y: raster.y,
+            visible: el.visible, strokeWidth: 1, pixels: nextPixels,
+          };
+          break;
+        }
+        const newAnim = { ...anim, frames: anim.frames.map((f, i) => i === frameIdx ? { ...frame, elements: newEls } : f) };
+        const newAnims = [...state.animations];
+        newAnims[animIdx] = newAnim;
+        return { ...state, animations: newAnims };
+      }
+
       const newLayers = state.layers.map((l) => ({ ...l, elements: [...l.elements] }));
 
       // Top-most hit wins (same visual stacking as hit-testing/select).
@@ -511,22 +740,18 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'TRANSFORM_ELEMENT': {
       const { id, op, angle } = action.payload;
-      return {
-        ...state,
-        layers: mapAllElements(state.layers, (el) =>
-          el.id === id ? transformElement(el, op, angle) : el
-        ),
-      };
+      const { layers, animations } = mapAllElements(state, (el) =>
+        el.id === id ? transformElement(el, op, angle) : el
+      );
+      return { ...state, layers, animations };
     }
 
     case 'RESIZE_ELEMENT': {
       const { id, x, y, width, height } = action.payload;
-      return {
-        ...state,
-        layers: mapAllElements(state.layers, (el) =>
-          el.id === id ? resizeElement(el, x, y, width, height) : el
-        ),
-      };
+      const { layers, animations } = mapAllElements(state, (el) =>
+        el.id === id ? resizeElement(el, x, y, width, height) : el
+      );
+      return { ...state, layers, animations };
     }
 
     // ---- LAYER ACTIONS ----
@@ -582,8 +807,8 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case 'MOVE_ELEMENT_TO_LAYER': {
-      const found = findElement(state.layers, action.payload.elementId);
-      if (!found || found.layer.id === action.payload.layerId) return state;
+      const found = findElement(state, action.payload.elementId);
+      if (!found || found.kind !== 'layer' || found.layer.id === action.payload.layerId) return state;
       const el = found.element;
       return {
         ...state,
@@ -592,6 +817,228 @@ function reducer(state: AppState, action: Action): AppState {
           if (l.id === action.payload.layerId) return { ...l, elements: [...l.elements, el] };
           return l;
         }),
+      };
+    }
+
+    /* ---------- Scene mode + onion-skin + playback ---------- */
+    case 'SET_SCENE_MODE': {
+      const mode = action.payload;
+      let activeAnimationId = state.editor.activeAnimationId;
+      let activeFrameId = state.editor.activeFrameId;
+      if (mode === 'animation' && !activeAnimationId && state.animations.length > 0) {
+        activeAnimationId = state.animations[0].id;
+        activeFrameId = state.animations[0].frames[0]?.id ?? null;
+      }
+      return {
+        ...state,
+        editor: { ...state.editor, mode, activeAnimationId, activeFrameId, playing: false, selectedWidgetId: null },
+        selectedId: null,
+      };
+    }
+
+    case 'SET_ONION':
+      return { ...state, editor: { ...state.editor, ...action.payload } };
+
+    case 'SET_PLAYING':
+      return { ...state, editor: { ...state.editor, playing: action.payload } };
+
+    /* ---------- Frame animations ---------- */
+    case 'ADD_ANIMATION': {
+      const baseName = action.payload?.name?.trim() || `animation ${state.animations.length + 1}`;
+      const anim = makeAnimation(baseName);
+      const ref: AnimationRefElement = {
+        id: uid('animref'), type: 'animationRef', x: anim.x, y: anim.y,
+        visible: true, strokeWidth: 1, animationId: anim.id,
+      };
+      return {
+        ...state,
+        animations: [...state.animations, anim],
+        layers: addRefToActiveLayer(state.layers, state.selectedLayerId, ref),
+        editor: { ...state.editor, mode: 'animation', activeAnimationId: anim.id, activeFrameId: anim.frames[0].id, selectedWidgetId: null },
+        selectedId: ref.id,
+      };
+    }
+
+    case 'DELETE_ANIMATION': {
+      const newAnims = state.animations.filter((a) => a.id !== action.payload);
+      const wasActive = state.editor.activeAnimationId === action.payload;
+      const { layers } = stripRefs(state, 'animationRef', action.payload);
+      return {
+        ...state,
+        animations: newAnims,
+        layers,
+        editor: {
+          ...state.editor,
+          activeAnimationId: wasActive ? (newAnims[0]?.id ?? null) : state.editor.activeAnimationId,
+          activeFrameId: wasActive ? (newAnims[0]?.frames[0]?.id ?? null) : state.editor.activeFrameId,
+        },
+      };
+    }
+
+    case 'RENAME_ANIMATION':
+      return { ...state, animations: state.animations.map((a) => a.id === action.payload.id ? { ...a, name: action.payload.name } : a) };
+
+    case 'TOGGLE_ANIMATION_VISIBLE':
+      return { ...state, animations: state.animations.map((a) => a.id === action.payload ? { ...a, visible: !a.visible } : a) };
+
+    case 'SELECT_ANIMATION': {
+      const anim = state.animations.find((a) => a.id === action.payload);
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          activeAnimationId: action.payload,
+          activeFrameId: anim?.frames[0]?.id ?? null,
+          selectedWidgetId: null,
+        },
+        selectedId: null,
+      };
+    }
+
+    case 'UPDATE_ANIMATION': {
+      const changes = action.payload.changes;
+      const newAnimations = state.animations.map((a) => a.id === action.payload.id ? { ...a, ...changes } : a);
+      // Keep AnimationRef.x/y in sync when the animation is moved as a whole.
+      const newLayers = (changes.x !== undefined || changes.y !== undefined)
+        ? state.layers.map((l) => ({
+            ...l,
+            elements: l.elements.map((e) =>
+              e.type === 'animationRef' && e.animationId === action.payload.id
+                ? { ...e, x: changes.x ?? e.x, y: changes.y ?? e.y }
+                : e
+            ),
+          }))
+        : state.layers;
+      return { ...state, animations: newAnimations, layers: newLayers };
+    }
+
+    case 'ADD_FRAME': {
+      const newFrame = makeFrame();
+      return {
+        ...state,
+        animations: state.animations.map((a) => a.id !== action.payload.animationId ? a : { ...a, frames: [...a.frames, newFrame] }),
+        editor: { ...state.editor, activeAnimationId: action.payload.animationId, activeFrameId: newFrame.id },
+        selectedId: null,
+      };
+    }
+
+    case 'DUPLICATE_FRAME': {
+      const anim = state.animations.find((a) => a.id === action.payload.animationId);
+      const src = anim?.frames.find((f) => f.id === action.payload.frameId);
+      if (!anim || !src) return state;
+      // Deep-clone elements with fresh ids so editing the copy doesn't mutate the original.
+      const cloned: Frame = {
+        id: uid('frame'),
+        durationMs: src.durationMs,
+        elements: src.elements.map((el) => ({ ...el, id: `${el.type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` })),
+      };
+      const idx = anim.frames.findIndex((f) => f.id === src.id);
+      const newFrames = [...anim.frames.slice(0, idx + 1), cloned, ...anim.frames.slice(idx + 1)];
+      return {
+        ...state,
+        animations: state.animations.map((a) => a.id === anim.id ? { ...a, frames: newFrames } : a),
+        editor: { ...state.editor, activeAnimationId: anim.id, activeFrameId: cloned.id },
+      };
+    }
+
+    case 'DELETE_FRAME': {
+      const anim = state.animations.find((a) => a.id === action.payload.animationId);
+      if (!anim || anim.frames.length <= 1) return state;
+      const idx = anim.frames.findIndex((f) => f.id === action.payload.frameId);
+      const newFrames = anim.frames.filter((f) => f.id !== action.payload.frameId);
+      const nextActiveId = state.editor.activeFrameId === action.payload.frameId
+        ? newFrames[Math.max(0, idx - 1)]?.id ?? null
+        : state.editor.activeFrameId;
+      return {
+        ...state,
+        animations: state.animations.map((a) => a.id === anim.id ? { ...a, frames: newFrames } : a),
+        editor: { ...state.editor, activeFrameId: nextActiveId },
+      };
+    }
+
+    case 'REORDER_FRAME': {
+      const anim = state.animations.find((a) => a.id === action.payload.animationId);
+      if (!anim) return state;
+      const idx = anim.frames.findIndex((f) => f.id === action.payload.frameId);
+      const swap = action.payload.direction === 'left' ? idx - 1 : idx + 1;
+      if (swap < 0 || swap >= anim.frames.length) return state;
+      const newFrames = [...anim.frames];
+      [newFrames[idx], newFrames[swap]] = [newFrames[swap], newFrames[idx]];
+      return { ...state, animations: state.animations.map((a) => a.id === anim.id ? { ...a, frames: newFrames } : a) };
+    }
+
+    case 'SELECT_FRAME':
+      return {
+        ...state,
+        editor: { ...state.editor, activeAnimationId: action.payload.animationId, activeFrameId: action.payload.frameId },
+        selectedId: null,
+      };
+
+    case 'UPDATE_FRAME':
+      return {
+        ...state,
+        animations: state.animations.map((a) => a.id !== action.payload.animationId ? a : {
+          ...a,
+          frames: a.frames.map((f) => f.id === action.payload.frameId ? { ...f, ...action.payload.changes } : f),
+        }),
+      };
+
+    /* ---------- Widgets ---------- */
+    case 'ADD_WIDGET': {
+      const id = uid('widget');
+      const cx = Math.floor(state.display.width / 2);
+      const cy = Math.floor(state.display.height / 2);
+      const w = makeDefaultWidget(action.payload.widgetType, id, action.payload.widgetType, cx, cy);
+      const ref: WidgetRefElement = {
+        id: uid('widgetref'), type: 'widgetRef', x: w.x, y: w.y,
+        visible: true, strokeWidth: 1, widgetId: w.id,
+      };
+      return {
+        ...state,
+        widgets: [...state.widgets, w],
+        layers: addRefToActiveLayer(state.layers, state.selectedLayerId, ref),
+        editor: { ...state.editor, selectedWidgetId: w.id },
+        selectedId: ref.id,
+      };
+    }
+
+    case 'UPDATE_WIDGET': {
+      const newWidgets = state.widgets.map((w) => w.id === action.payload.id ? action.payload : w);
+      // Keep WidgetRef.x/y in sync.
+      const w = action.payload;
+      const newLayers = state.layers.map((l) => ({
+        ...l,
+        elements: l.elements.map((e) =>
+          e.type === 'widgetRef' && e.widgetId === w.id ? { ...e, x: w.x, y: w.y } : e
+        ),
+      }));
+      return { ...state, widgets: newWidgets, layers: newLayers };
+    }
+
+    case 'DELETE_WIDGET': {
+      const { layers } = stripRefs(state, 'widgetRef', action.payload);
+      return {
+        ...state,
+        widgets: state.widgets.filter((w) => w.id !== action.payload),
+        layers,
+        editor: { ...state.editor, selectedWidgetId: state.editor.selectedWidgetId === action.payload ? null : state.editor.selectedWidgetId },
+      };
+    }
+
+    case 'SELECT_WIDGET':
+      return { ...state, editor: { ...state.editor, selectedWidgetId: action.payload }, selectedId: null };
+
+    case 'MOVE_WIDGET': {
+      const { id, x, y } = action.payload;
+      return {
+        ...state,
+        widgets: state.widgets.map((w) => w.id === id ? { ...w, x, y } : w),
+        layers: state.layers.map((l) => ({
+          ...l,
+          elements: l.elements.map((e) =>
+            e.type === 'widgetRef' && e.widgetId === id ? { ...e, x, y } : e
+          ),
+        })),
       };
     }
 
@@ -630,6 +1077,31 @@ export function getAllElements(state: AppState): { element: CanvasElement; layer
   const out: { element: CanvasElement; layer: Layer }[] = [];
   for (const l of state.layers) {
     for (const e of l.elements) out.push({ element: e, layer: l });
+  }
+  return out;
+}
+
+/**
+ * Elements actually shown in the editor, in render (back-to-front) order,
+ * for the current scene mode. In animation mode the active frame's elements
+ * are included; static layers are still shown beneath as the scene base.
+ */
+export { getEditableElementsInOrder };
+
+export function getAllElementsForRender(state: AppState): { element: CanvasElement; layer?: Layer }[] {
+  const out: { element: CanvasElement; layer?: Layer }[] = [];
+  for (const l of state.layers) if (l.visible) for (const e of l.elements) out.push({ element: e, layer: l });
+  // Note: animations and widgets are now rendered through AnimationRef/WidgetRef
+  // elements embedded in layers, so they appear in the user-controlled z-order.
+  // While in animation mode, also show the active frame's elements above so the
+  // user can author them. (The animation's ref will also render the same frame,
+  // which is fine - they overlay perfectly.)
+  if (state.editor.mode === 'animation' && state.editor.activeAnimationId && state.editor.activeFrameId) {
+    const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
+    const frame = anim?.frames.find((f) => f.id === state.editor.activeFrameId);
+    if (anim && anim.visible && frame) {
+      for (const e of frame.elements) out.push({ element: e });
+    }
   }
   return out;
 }

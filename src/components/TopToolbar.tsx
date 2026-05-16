@@ -1,4 +1,4 @@
-import { useStore, type ActiveTool } from '../store';
+import { useStore, type ActiveTool, type SceneMode } from '../store';
 import { useRef } from 'react';
 
 const tools: { id: ActiveTool; label: string; icon: string; shortcut?: string }[] = [
@@ -156,6 +156,43 @@ export default function TopToolbar() {
       </div>
 
       <div className="top-toolbar-info">
+        {/* Scene mode tabs */}
+        <div className="mode-tabs" role="tablist">
+          {(['static', 'animation', 'widgets'] as SceneMode[]).map((m) => (
+            <button
+              key={m}
+              role="tab"
+              aria-selected={state.editor.mode === m}
+              className={`mode-tab ${state.editor.mode === m ? 'mode-active' : ''}`}
+              onClick={() => dispatch({ type: 'SET_SCENE_MODE', payload: m })}
+              title={`${m[0].toUpperCase()}${m.slice(1)} mode`}
+            >{m}</button>
+          ))}
+        </div>
+
+        {/* Playback controls (animation mode only) */}
+        {state.editor.mode === 'animation' && (() => {
+          const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
+          if (!anim) return null;
+          const idx = anim.frames.findIndex((f) => f.id === state.editor.activeFrameId);
+          const goTo = (i: number) => {
+            const ni = ((i % anim.frames.length) + anim.frames.length) % anim.frames.length;
+            dispatch({ type: 'SELECT_FRAME', payload: { animationId: anim.id, frameId: anim.frames[ni].id } });
+          };
+          return (
+            <div className="playback-controls">
+              <button onClick={() => goTo(idx - 1)} title="Previous frame">⏮</button>
+              <button
+                onClick={() => dispatch({ type: 'SET_PLAYING', payload: !state.editor.playing })}
+                className={state.editor.playing ? 'tool-active' : ''}
+                title={state.editor.playing ? 'Pause' : 'Play'}
+              >{state.editor.playing ? '⏸' : '▶'}</button>
+              <button onClick={() => goTo(idx + 1)} title="Next frame">⏭</button>
+              <span className="frame-indicator">{idx + 1}/{anim.frames.length}</span>
+            </div>
+          );
+        })()}
+
         <span className="coord-label">XY</span>
         <span className="canvas-coords" id="canvas-coords">—,—</span>
       </div>
