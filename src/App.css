@@ -916,3 +916,24 @@ button:active {
 .widget-item.active { border-color: var(--accent); color: var(--accent); }
 .widget-item button { background: transparent; border: 0; color: var(--text-dim); cursor: pointer; padding: 0 4px; }
 .widget-item button:hover { color: var(--accent); }
+
+/* --- Screen Manager ------------------------------------------------- */
+.screen-manager { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--bg-surface); border-bottom: 1px solid var(--border-bright); min-height: 32px; }
+.screen-tabs { display: flex; align-items: center; gap: 2px; flex: 1; overflow-x: auto; }
+.screen-tab { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; font-size: 11px; background: var(--bg-deep); color: var(--text-dim); border: 1px solid var(--border-bright); border-radius: 4px; cursor: pointer; user-select: none; white-space: nowrap; }
+.screen-tab:hover { color: var(--accent); border-color: var(--accent); }
+.screen-tab.screen-active { background: var(--accent); color: var(--bg-deep); font-weight: 600; border-color: var(--accent); }
+.screen-idx { font-family: var(--mono, monospace); font-size: 9px; opacity: 0.7; }
+.screen-name { font-size: 11px; }
+.screen-name-input { background: var(--bg-deep); color: var(--text); border: 1px solid var(--accent); border-radius: 2px; font-size: 11px; padding: 1px 3px; width: 100px; }
+.screen-default-badge { color: gold; font-size: 11px; }
+.screen-add-btn { background: var(--bg-deep); border: 1px dashed var(--border-bright); color: var(--text-dim); padding: 3px 8px; font-size: 11px; border-radius: 4px; cursor: pointer; margin-left: 4px; }
+.screen-add-btn:hover { color: var(--accent); border-color: var(--accent); }
+.screen-actions { display: flex; align-items: center; gap: 3px; }
+.screen-actions button { background: var(--bg-deep); border: 1px solid var(--border-bright); color: var(--text); padding: 3px 8px; font-size: 11px; cursor: pointer; border-radius: 3px; }
+.screen-actions button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.screen-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.screen-actions button.btn-active { background: var(--accent); color: var(--bg-deep); }
+.screen-transition-label { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-dim); }
+.screen-transition-label select { background: var(--bg-deep); color: var(--text); border: 1px solid var(--border-bright); font-size: 11px; padding: 2px 4px; border-radius: 3px; }
+.project-name-input { background: var(--bg-deep); color: var(--text); border: 1px solid var(--border-bright); padding: 3px 6px; font-size: 11px; border-radius: 3px; width: 140px; margin-right: 4px; }

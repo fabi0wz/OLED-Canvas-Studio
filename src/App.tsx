@@ -3,6 +3,7 @@ import { StoreProvider, useStore } from './store';
 import Canvas from './components/Canvas';
 import Toolbar from './components/Toolbar';
 import TopToolbar from './components/TopToolbar';
+import ScreenManager from './components/ScreenManager';
 import LayerPanel from './components/LayerPanel';
 import FramePanel from './components/FramePanel';
 import WidgetPanel from './components/WidgetPanel';
@@ -54,6 +55,7 @@ export default function App() {
     <StoreProvider>
       <div className="app-layout">
         <TopToolbar />
+        <ScreenManager />
         <div className="app-body">
           {!leftCollapsed && (
             <>

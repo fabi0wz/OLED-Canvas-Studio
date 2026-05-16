@@ -1,17 +1,17 @@
 import { useState } from 'react';
-import { useStore } from '../store';
+import { useStore, getAllScreensCommitted } from '../store';
 import { generateU8g2Code } from '../codegen';
 
 export default function CodePanel() {
   const { state, dispatch } = useStore();
   const [copied, setCopied] = useState(false);
 
+  const screens = getAllScreensCommitted(state);
   const code = generateU8g2Code({
     display: state.display,
-    layers: state.layers,
-    erasedPixels: state.erasedPixels,
-    animations: state.animations,
-    widgets: state.widgets,
+    screens,
+    defaultScreenId: state.project.defaultScreenId,
+    projectName: state.project.name,
   });
 
   function handleCopy() {
@@ -26,7 +26,7 @@ export default function CodePanel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'oled_layout.ino';
+    a.download = `${(state.project.name || 'oled_layout').replace(/[^a-zA-Z0-9_-]+/g, '_')}.ino`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -34,12 +34,9 @@ export default function CodePanel() {
   function handleSaveProject() {
     const project = JSON.stringify({
       display: state.display,
-      layers: state.layers,
-      erasedPixels: state.erasedPixels,
-      animations: state.animations,
-      widgets: state.widgets,
+      project: state.project,
+      screens: getAllScreensCommitted(state),
     }, (_key, value) => {
-      // Serialize Uint8Array as regular arrays for JSON compatibility
       if (value instanceof Uint8Array) return Array.from(value);
       return value;
     }, 2);
@@ -47,7 +44,7 @@ export default function CodePanel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'oled_project.json';
+    a.download = `${(state.project.name || 'oled_project').replace(/[^a-zA-Z0-9_-]+/g, '_')}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -63,24 +60,32 @@ export default function CodePanel() {
       reader.onload = (ev) => {
         try {
           const data = JSON.parse(ev.target?.result as string);
-          // Accept both new (layers) and legacy (elements) format
-          if (data.display && (data.layers || data.elements)) {
-            // Restore Uint8Array for bitmap elements (including those inside animation frames)
-            const restoreInLayers = (arr: { elements?: { type?: string; data?: unknown }[] }[]) => {
-              for (const l of arr || []) {
-                for (const el of l.elements || []) {
-                  if (el.type === 'bitmap' && Array.isArray(el.data)) {
-                    (el as { data: Uint8Array }).data = new Uint8Array(el.data as number[]);
-                  }
+          if (!data.display || (!data.layers && !data.elements && !data.screens)) {
+            alert('Invalid project file.');
+            return;
+          }
+          // Restore Uint8Array for bitmap elements anywhere they may appear.
+          const restoreInContainers = (arr: { elements?: { type?: string; data?: unknown }[] }[] | undefined) => {
+            for (const l of arr || []) {
+              for (const el of l.elements || []) {
+                if (el.type === 'bitmap' && Array.isArray(el.data)) {
+                  (el as { data: Uint8Array }).data = new Uint8Array(el.data as number[]);
                 }
               }
-            };
-            restoreInLayers(data.layers || []);
-            for (const a of data.animations || []) restoreInLayers(a.frames || []);
-            dispatch({ type: 'LOAD_PROJECT', payload: data });
+            }
+          };
+          // Multi-screen format
+          if (Array.isArray(data.screens)) {
+            for (const s of data.screens) {
+              restoreInContainers(s.layers);
+              for (const a of s.animations || []) restoreInContainers(a.frames);
+            }
           } else {
-            alert('Invalid project file.');
+            // Legacy single-screen format
+            restoreInContainers(data.layers);
+            for (const a of data.animations || []) restoreInContainers(a.frames);
           }
+          dispatch({ type: 'LOAD_PROJECT', payload: data });
         } catch {
           alert('Invalid project file.');
         }
@@ -93,8 +98,16 @@ export default function CodePanel() {
   return (
     <div className="panel code-panel">
       <div className="code-header">
-        <h3>Generated Code · U8g2</h3>
+        <h3>Generated Code · U8g2 · {state.screens.length} screen{state.screens.length === 1 ? '' : 's'}</h3>
         <div className="btn-group">
+          <input
+            className="project-name-input"
+            type="text"
+            value={state.project.name}
+            onChange={(e) => dispatch({ type: 'SET_PROJECT_NAME', payload: e.target.value })}
+            placeholder="Project name"
+            title="Project name (used as default filename)"
+          />
           <button onClick={handleCopy}>{copied ? '✓ Copied' : 'Copy'}</button>
           <button onClick={handleDownloadIno}>.ino</button>
           <button onClick={handleSaveProject}>Save</button>
