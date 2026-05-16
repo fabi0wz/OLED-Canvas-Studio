@@ -54,6 +54,15 @@ export function rasterizeElementsToBitmap(
         }
         break;
       }
+      case 'group': {
+        const absChildren = el.children.map((c: import('../types').CanvasElement) => {
+          if (c.type === 'line') return { ...c, x: c.x + el.x, y: c.y + el.y, x2: c.x2 + el.x, y2: c.y2 + el.y };
+          return { ...c, x: c.x + el.x, y: c.y + el.y };
+        }) as import('../types').CanvasElement[];
+        const inner = rasterizeElementsToBitmap(absChildren, width, height);
+        for (let i = 0; i < inner.length; i++) { if (inner[i]) buf[i] = 1; }
+        break;
+      }
     }
   }
   return buf;

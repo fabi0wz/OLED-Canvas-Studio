@@ -50,6 +50,7 @@ export const initialState: AppState = {
   layers: defaultScreen.layers,
   selectedLayerId: defaultLayer.id,
   selectedId: null,
+  selectedIds: [],
   erasedPixels: [],
   showGrid: false,
   snapSize: 0,

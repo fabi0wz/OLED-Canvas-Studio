@@ -40,6 +40,12 @@ export interface CircleElement extends BaseElement {
 export interface PixelsElement extends BaseElement {
   type: 'pixels';
   pixels: [number, number][];
+  inverted?: boolean;
+}
+
+export interface GroupElement extends BaseElement {
+  type: 'group';
+  children: CanvasElement[];
 }
 
 export interface BitmapElement extends BaseElement {
@@ -66,5 +72,5 @@ export interface WidgetRefElement extends BaseElement {
 
 export type CanvasElement =
   | TextElement | RectElement | LineElement | CircleElement
-  | PixelsElement | BitmapElement
+  | PixelsElement | BitmapElement | GroupElement
   | AnimationRefElement | WidgetRefElement;

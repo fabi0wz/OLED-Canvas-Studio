@@ -24,6 +24,7 @@ export interface AppState {
   layers: Layer[];
   selectedLayerId: string;
   selectedId: string | null;
+  selectedIds: string[];
   erasedPixels: [number, number][];
   showGrid: boolean;
   snapSize: number;
@@ -91,4 +92,9 @@ export type Action =
   | { type: 'SELECT_SCREEN'; payload: string }
   | { type: 'SET_DEFAULT_SCREEN'; payload: string }
   | { type: 'SET_PROJECT_NAME'; payload: string }
-  | { type: 'SET_SCREEN_TRANSITION'; payload: { id: string; transition: ScreenTransition } };
+  | { type: 'SET_SCREEN_TRANSITION'; payload: { id: string; transition: ScreenTransition } }
+  | { type: 'SELECT_ELEMENT_MULTI'; payload: string }
+  | { type: 'SELECT_ELEMENTS'; payload: string[] }
+  | { type: 'GROUP_ELEMENTS' }
+  | { type: 'UNGROUP_ELEMENT'; payload: string }
+  | { type: 'FLATTEN_ELEMENTS' };

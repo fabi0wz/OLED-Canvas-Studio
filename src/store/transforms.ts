@@ -1,8 +1,10 @@
-import type { CanvasElement } from '../types';
+import type { CanvasElement, GroupElement } from '../types';
 import {
-  createBuffer, drawBox, drawCircle, drawDisc,
+  createBuffer, setPixel, drawBox, drawCircle, drawDisc,
   drawFrame, drawLine, drawThickCircle, drawThickFrame, drawThickLine,
 } from '../pixelEngine';
+import { BITMAP_FONTS, type BitmapFont } from '../bitmapFonts';
+import { FONT_METRICS } from '../types';
 
 function collectPixels(buf: Uint8Array, width: number, height: number): [number, number][] {
   const out: [number, number][] = [];
@@ -70,6 +72,49 @@ export function rasterizeElementToPixels(
       }
     }
     return { x: el.x, y: el.y, pixels };
+  }
+
+  if (el.type === 'text') {
+    const font: BitmapFont = BITMAP_FONTS[el.font] || BITMAP_FONTS['u8g2_font_6x10_tr'];
+    if (!font) return null;
+    const metrics = FONT_METRICS[el.font] || { width: font.width, height: font.height };
+    const tw = el.text.length * metrics.width;
+    const th = font.height;
+    if (tw === 0) return null;
+    const buf = createBuffer(tw, th);
+    for (let ci = 0; ci < el.text.length; ci++) {
+      const code = el.text.charCodeAt(ci);
+      const glyph = font.glyphs[code] || font.glyphs[63];
+      if (!glyph) continue;
+      for (let row = 0; row < glyph.length; row++) {
+        const bits = glyph[row];
+        for (let col = 0; col < font.width; col++) {
+          if (bits & (1 << (font.width - 1 - col))) {
+            setPixel(buf, tw, th, ci * metrics.width + col, row);
+          }
+        }
+      }
+    }
+    return { x: el.x, y: el.y - font.baseline, pixels: collectPixels(buf, tw, th) };
+  }
+
+  if (el.type === 'group') {
+    const g = el as GroupElement;
+    const allPixels: [number, number][] = [];
+    for (const child of g.children) {
+      const abs: CanvasElement = child.type === 'line'
+        ? { ...child, x: child.x + g.x, y: child.y + g.y, x2: child.x2 + g.x, y2: child.y2 + g.y } as CanvasElement
+        : { ...child, x: child.x + g.x, y: child.y + g.y } as CanvasElement;
+      const r = rasterizeElementToPixels(abs);
+      if (r) {
+        for (const [px, py] of r.pixels) allPixels.push([r.x + px, r.y + py]);
+      }
+    }
+    if (allPixels.length === 0) return { x: g.x, y: g.y, pixels: [] };
+    let minX = Infinity, minY = Infinity;
+    for (const [x, y] of allPixels) { if (x < minX) minX = x; if (y < minY) minY = y; }
+    const rel: [number, number][] = allPixels.map(([x, y]) => [x - minX, y - minY]);
+    return { x: minX, y: minY, pixels: rel };
   }
 
   return null;

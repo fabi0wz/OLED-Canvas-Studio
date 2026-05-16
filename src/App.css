@@ -844,6 +844,7 @@ button:active {
 .el-type-line   { color: #74c0fc; border-color: #244c6e; }
 .el-type-pixels { color: #c7a8ff; border-color: #4a3870; }
 .el-type-bitmap { color: #ffa94d; border-color: #5a3c1f; }
+.el-type-group  { color: #e0e0e0; border-color: #555; }
 
 .el-label {
   flex: 1;

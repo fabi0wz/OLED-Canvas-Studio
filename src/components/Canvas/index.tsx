@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useStore, snapCoord, getAllElements, getAllElementsForRender } from '../../store';
-import type { CanvasElement, PixelsElement, TextElement, RectElement, LineElement, CircleElement } from '../../types';
+import type { CanvasElement, PixelsElement, TextElement, RectElement, LineElement, CircleElement, GroupElement } from '../../types';
 import { FONT_METRICS } from '../../types';
 import { createBuffer, renderBuffer } from '../../pixelEngine';
 import { getWidgetBounds } from '../../widgets';
@@ -12,6 +12,7 @@ export default function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<{ id: string; kind: 'element' | 'widget'; offsetX: number; offsetY: number } | null>(null);
+  const [multiDragging, setMultiDragging] = useState<{ ids: string[]; startPx: number; startPy: number; origins: { id: string; x: number; y: number; x2?: number; y2?: number }[] } | null>(null);
   const [painting, setPainting] = useState(false);
   const [erasing, setErasing] = useState(false);
   const paintTargetRef = useRef<string | null>(null);
@@ -78,6 +79,19 @@ export default function Canvas() {
         if (!wgt) return { x: el.x, y: el.y, w: 1, h: 1 };
         return getWidgetBounds(wgt);
       }
+      case 'group': {
+        const g = el as GroupElement;
+        if (g.children.length === 0) return { x: g.x, y: g.y, w: 1, h: 1 };
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const c of g.children) {
+          const cb = getElementBounds({ ...c, x: c.x + g.x, y: c.y + g.y } as CanvasElement);
+          if (cb.x < minX) minX = cb.x;
+          if (cb.y < minY) minY = cb.y;
+          if (cb.x + cb.w > maxX) maxX = cb.x + cb.w;
+          if (cb.y + cb.h > maxY) maxY = cb.y + cb.h;
+        }
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      }
     }
   }
 
@@ -109,7 +123,7 @@ export default function Canvas() {
   function hitTestHandle(clientX: number, clientY: number): HandleId | null {
     if (state.activeTool !== 'select' || !selectedId) return null;
     const sel = findElementById(selectedId);
-    if (!sel || sel.type === 'text' || sel.type === 'pixels' || sel.type === 'animationRef' || sel.type === 'widgetRef') return null;
+    if (!sel || sel.type === 'text' || sel.type === 'pixels' || sel.type === 'animationRef' || sel.type === 'widgetRef' || sel.type === 'group') return null;
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
@@ -217,7 +231,7 @@ export default function Canvas() {
         ctx.strokeRect(b.x * zoom - 2, b.y * zoom - 2, b.w * zoom + 4, b.h * zoom + 4);
         ctx.setLineDash([]);
 
-        if (state.activeTool === 'select' && sel.type !== 'text' && sel.type !== 'pixels' && sel.type !== 'animationRef' && sel.type !== 'widgetRef') {
+        if (state.activeTool === 'select' && sel.type !== 'text' && sel.type !== 'pixels' && sel.type !== 'animationRef' && sel.type !== 'widgetRef' && sel.type !== 'group') {
           const handles = getHandlePositions(b);
           const sz = 7;
           ctx.lineWidth = 1;
@@ -231,6 +245,21 @@ export default function Canvas() {
             ctx.strokeRect(hx - sz / 2 + 0.5, hy - sz / 2 + 0.5, sz - 1, sz - 1);
           }
         }
+      }
+    }
+
+    // Multi-selection highlights
+    if (state.selectedIds.length > 1) {
+      for (const sid of state.selectedIds) {
+        if (sid === selectedId) continue;
+        const el = findElementById(sid);
+        if (!el) continue;
+        const b = getElementBounds(el);
+        ctx.strokeStyle = '#ffb627';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.strokeRect(b.x * zoom - 1, b.y * zoom - 1, b.w * zoom + 2, b.h * zoom + 2);
+        ctx.setLineDash([]);
       }
     }
 
@@ -292,6 +321,22 @@ export default function Canvas() {
     function handleKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // Ctrl+G = group, Ctrl+Shift+G = ungroup, Ctrl+Shift+F = flatten
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g' && !e.shiftKey) {
+        e.preventDefault();
+        dispatch({ type: 'GROUP_ELEMENTS' });
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        if (state.selectedId) dispatch({ type: 'UNGROUP_ELEMENT', payload: state.selectedId });
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        dispatch({ type: 'FLATTEN_ELEMENTS' });
+        return;
+      }
       switch (e.key.toLowerCase()) {
         case 'v': dispatch({ type: 'SET_TOOL', payload: 'select' }); break;
         case 't': dispatch({ type: 'SET_TOOL', payload: 'add-text' }); break;
@@ -449,13 +494,32 @@ export default function Canvas() {
     const frameHit = hitTestFrameElement(raw.px, raw.py);
     const hit = hitTest(raw.px, raw.py);
     if (frameHit) {
-      dispatch({ type: 'SELECT_ELEMENT', payload: frameHit.id });
-      setDragging({ id: frameHit.id, kind: 'element', offsetX: raw.px - frameHit.x, offsetY: raw.py - frameHit.y });
+      if (e.shiftKey && state.activeTool === 'select') {
+        dispatch({ type: 'SELECT_ELEMENT_MULTI', payload: frameHit.id });
+      } else {
+        dispatch({ type: 'SELECT_ELEMENT', payload: frameHit.id });
+        setDragging({ id: frameHit.id, kind: 'element', offsetX: raw.px - frameHit.x, offsetY: raw.py - frameHit.y });
+      }
     } else if (hit) {
       if (hit.type === 'widgetRef') dispatch({ type: 'SELECT_WIDGET', payload: hit.widgetId });
       else dispatch({ type: 'SELECT_WIDGET', payload: null });
-      dispatch({ type: 'SELECT_ELEMENT', payload: hit.id });
-      setDragging({ id: hit.id, kind: 'element', offsetX: raw.px - hit.x, offsetY: raw.py - hit.y });
+      if (e.shiftKey && state.activeTool === 'select') {
+        dispatch({ type: 'SELECT_ELEMENT_MULTI', payload: hit.id });
+      } else {
+        // If clicking on an already multi-selected element, start multi-drag
+        if (state.selectedIds.length > 1 && state.selectedIds.includes(hit.id)) {
+          const origins = state.selectedIds.map((sid) => {
+            const el = findElementById(sid);
+            if (!el) return { id: sid, x: 0, y: 0 };
+            if (el.type === 'line') return { id: sid, x: el.x, y: el.y, x2: el.x2, y2: el.y2 };
+            return { id: sid, x: el.x, y: el.y };
+          });
+          setMultiDragging({ ids: state.selectedIds, startPx: raw.px, startPy: raw.py, origins });
+        } else {
+          dispatch({ type: 'SELECT_ELEMENT', payload: hit.id });
+          setDragging({ id: hit.id, kind: 'element', offsetX: raw.px - hit.x, offsetY: raw.py - hit.y });
+        }
+      }
     } else {
       dispatch({ type: 'SELECT_ELEMENT', payload: null });
       dispatch({ type: 'SELECT_WIDGET', payload: null });
@@ -514,6 +578,22 @@ export default function Canvas() {
 
     if (erasing && state.activeTool === 'eraser') { dispatch({ type: 'ERASE_PIXEL', payload: { x: raw.px, y: raw.py } }); return; }
 
+    if (multiDragging) {
+      const dx = raw.px - multiDragging.startPx;
+      const dy = raw.py - multiDragging.startPy;
+      for (const origin of multiDragging.origins) {
+        const snapped = snap(origin.x + dx, origin.y + dy);
+        if (origin.x2 !== undefined && origin.y2 !== undefined) {
+          const ddx = snapped.x - origin.x;
+          const ddy = snapped.y - origin.y;
+          dispatch({ type: 'MOVE_ELEMENT', payload: { id: origin.id, x: snapped.x, y: snapped.y, x2: origin.x2 + ddx, y2: origin.y2 + ddy } });
+        } else {
+          dispatch({ type: 'MOVE_ELEMENT', payload: { id: origin.id, x: snapped.x, y: snapped.y } });
+        }
+      }
+      return;
+    }
+
     if (painting && paintTargetRef.current) {
       const target = findElementById(paintTargetRef.current);
       if (target && target.type === 'pixels') {
@@ -551,6 +631,7 @@ export default function Canvas() {
       setCreating(null);
     }
     setDragging(null);
+    setMultiDragging(null);
     setPainting(false);
     setErasing(false);
     setPanning(false);
@@ -558,7 +639,7 @@ export default function Canvas() {
     paintTargetRef.current = null;
   }
 
-  let cursorStyle = panning ? 'grabbing' : (dragging ? 'grabbing' : (CURSOR_MAP[state.activeTool] || 'default'));
+  let cursorStyle = panning ? 'grabbing' : (dragging || multiDragging ? 'grabbing' : (CURSOR_MAP[state.activeTool] || 'default'));
   if (resizing) cursorStyle = HANDLE_CURSORS[resizing.handle];
   else if (hoverHandle && state.activeTool === 'select') cursorStyle = HANDLE_CURSORS[hoverHandle];
 

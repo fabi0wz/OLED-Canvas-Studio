@@ -126,8 +126,23 @@ export function renderElementIntoBuffer(
       return;
     }
     case 'pixels': {
-      for (const [px, py] of el.pixels) {
-        setPixel(buf, dispW, dispH, el.x + px, el.y + py);
+      if (el.inverted) {
+        for (const [px, py] of el.pixels) {
+          clearPixel(buf, dispW, dispH, el.x + px, el.y + py);
+        }
+      } else {
+        for (const [px, py] of el.pixels) {
+          setPixel(buf, dispW, dispH, el.x + px, el.y + py);
+        }
+      }
+      return;
+    }
+    case 'group': {
+      for (const child of el.children) {
+        const shifted = child.type === 'line'
+          ? { ...child, x: child.x + el.x, y: child.y + el.y, x2: child.x2 + el.x, y2: child.y2 + el.y }
+          : { ...child, x: child.x + el.x, y: child.y + el.y };
+        renderElementIntoBuffer(buf, dispW, dispH, shifted as import('../../types').CanvasElement, lookups);
       }
       return;
     }

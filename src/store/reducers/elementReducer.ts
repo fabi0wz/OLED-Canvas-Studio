@@ -1,11 +1,12 @@
 import type { AppState, Action } from '../types';
-import type { CanvasElement, WidgetRefElement } from '../../types';
+import type { CanvasElement, WidgetRefElement, GroupElement } from '../../types';
 import {
   mapAllElements, mapElementsInLayer, findElement,
   addElementToActiveContainer,
 } from '../helpers';
 import { rasterizeElementToPixels } from '../transforms';
 import { transformElement, resizeElement } from '../transforms';
+import { nextId } from '../../components/Canvas/constants';
 
 export function reduceElement(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -30,11 +31,12 @@ export function reduceElement(state: AppState, action: Action): AppState {
       return {
         ...state, layers, animations,
         selectedId: state.selectedId === action.payload ? null : state.selectedId,
+        selectedIds: state.selectedIds.filter((id) => id !== action.payload),
       };
     }
 
     case 'SELECT_ELEMENT': {
-      if (action.payload == null) return { ...state, selectedId: null };
+      if (action.payload == null) return { ...state, selectedId: null, selectedIds: [] };
       const found = findElement(state, action.payload);
       const el = found?.kind === 'layer'
         ? found.layer.elements.find((e) => e.id === action.payload)
@@ -45,6 +47,7 @@ export function reduceElement(state: AppState, action: Action): AppState {
       return {
         ...state,
         selectedId: action.payload,
+        selectedIds: [action.payload],
         selectedLayerId: found && found.kind === 'layer' ? found.layer.id : state.selectedLayerId,
         editor: { ...state.editor, selectedWidgetId: keepWidget },
       };
@@ -147,7 +150,7 @@ export function reduceElement(state: AppState, action: Action): AppState {
           const hit = raster.pixels.some(([px, py]) => raster.x + px === x && raster.y + py === y);
           if (!hit) continue;
           const nextPixels = raster.pixels.filter(([px, py]) => raster.x + px !== x || raster.y + py !== y);
-          newEls[ei] = { id: el.id, type: 'pixels', x: raster.x, y: raster.y, visible: el.visible, strokeWidth: 1, pixels: nextPixels };
+          newEls[ei] = { id: el.id, type: 'pixels', x: raster.x, y: raster.y, visible: el.visible, strokeWidth: 1, pixels: nextPixels, inverted: ('inverted' in el && !!(el as any).inverted) || undefined };
           break;
         }
         const newAnim = { ...anim, frames: anim.frames.map((f, i) => i === frameIdx ? { ...frame, elements: newEls } : f) };
@@ -174,7 +177,7 @@ export function reduceElement(state: AppState, action: Action): AppState {
           const hit = raster.pixels.some(([px, py]) => raster.x + px === x && raster.y + py === y);
           if (!hit) continue;
           const nextPixels = raster.pixels.filter(([px, py]) => raster.x + px !== x || raster.y + py !== y);
-          layer.elements[ei] = { id: el.id, type: 'pixels', x: raster.x, y: raster.y, visible: el.visible, strokeWidth: 1, pixels: nextPixels };
+          layer.elements[ei] = { id: el.id, type: 'pixels', x: raster.x, y: raster.y, visible: el.visible, strokeWidth: 1, pixels: nextPixels, inverted: ('inverted' in el && !!(el as any).inverted) || undefined };
           return { ...state, layers: newLayers, erasedPixels: state.erasedPixels.filter(([px, py]) => px !== x || py !== y) };
         }
       }
@@ -198,6 +201,177 @@ export function reduceElement(state: AppState, action: Action): AppState {
         el.id === id ? resizeElement(el, x, y, width, height) : el
       );
       return { ...state, layers, animations };
+    }
+
+    case 'SELECT_ELEMENT_MULTI': {
+      const id = action.payload;
+      const found = findElement(state, id);
+      if (!found || found.kind !== 'layer') return state;
+      // If selectedIds is empty but there's a selectedId, seed with it
+      let base = state.selectedIds;
+      if (base.length === 0 && state.selectedId && state.selectedId !== id) {
+        base = [state.selectedId];
+      }
+      const already = base.includes(id);
+      const newIds = already ? base.filter((x) => x !== id) : [...base, id];
+      return {
+        ...state,
+        selectedIds: newIds,
+        selectedId: newIds.length > 0 ? newIds[newIds.length - 1] : null,
+      };
+    }
+
+    case 'SELECT_ELEMENTS': {
+      return {
+        ...state,
+        selectedIds: action.payload,
+        selectedId: action.payload.length > 0 ? action.payload[action.payload.length - 1] : null,
+      };
+    }
+
+    case 'GROUP_ELEMENTS': {
+      const ids = state.selectedIds;
+      if (ids.length < 2) return state;
+      // All selected must be in the same layer
+      const firstFound = findElement(state, ids[0]);
+      if (!firstFound || firstFound.kind !== 'layer') return state;
+      const layerId = firstFound.layer.id;
+      const layer = state.layers.find((l) => l.id === layerId);
+      if (!layer) return state;
+      // Collect elements in their current order
+      const children: CanvasElement[] = [];
+      for (const el of layer.elements) {
+        if (ids.includes(el.id)) children.push(el);
+      }
+      if (children.length < 2) return state;
+      // Verify all are in same layer
+      for (const id of ids) {
+        const f = findElement(state, id);
+        if (!f || f.kind !== 'layer' || f.layer.id !== layerId) return state;
+      }
+      // Compute bounding box
+      let minX = Infinity, minY = Infinity;
+      for (const c of children) { if (c.x < minX) minX = c.x; if (c.y < minY) minY = c.y; }
+      // Offset children relative to group origin
+      const relChildren: CanvasElement[] = children.map((c) => {
+        if (c.type === 'line') return { ...c, x: c.x - minX, y: c.y - minY, x2: c.x2 - minX, y2: c.y2 - minY };
+        return { ...c, x: c.x - minX, y: c.y - minY };
+      });
+      const groupEl: GroupElement = {
+        id: nextId('group'), type: 'group', x: minX, y: minY,
+        visible: true, strokeWidth: 1, children: relChildren,
+      };
+      // Replace children with group in layer, preserving order (insert at first child position)
+      const idSet = new Set(ids);
+      const newElements: CanvasElement[] = [];
+      let inserted = false;
+      for (const el of layer.elements) {
+        if (idSet.has(el.id)) {
+          if (!inserted) { newElements.push(groupEl); inserted = true; }
+        } else {
+          newElements.push(el);
+        }
+      }
+      const newLayers = state.layers.map((l) => l.id === layerId ? { ...l, elements: newElements } : l);
+      return { ...state, layers: newLayers, selectedId: groupEl.id, selectedIds: [groupEl.id] };
+    }
+
+    case 'UNGROUP_ELEMENT': {
+      const id = action.payload;
+      const found = findElement(state, id);
+      if (!found || found.kind !== 'layer') return state;
+      const el = found.element;
+      if (el.type !== 'group') return state;
+      const group = el as GroupElement;
+      // Restore children to absolute positions
+      const absChildren: CanvasElement[] = group.children.map((c) => {
+        if (c.type === 'line') return { ...c, x: c.x + group.x, y: c.y + group.y, x2: c.x2 + group.x, y2: c.y2 + group.y };
+        return { ...c, x: c.x + group.x, y: c.y + group.y };
+      });
+      const layerId = found.layer.id;
+      const newElements: CanvasElement[] = [];
+      for (const e of found.layer.elements) {
+        if (e.id === id) newElements.push(...absChildren);
+        else newElements.push(e);
+      }
+      const newLayers = state.layers.map((l) => l.id === layerId ? { ...l, elements: newElements } : l);
+      const childIds = absChildren.map((c) => c.id);
+      return { ...state, layers: newLayers, selectedId: childIds[0] ?? null, selectedIds: childIds };
+    }
+
+    case 'FLATTEN_ELEMENTS': {
+      const ids = state.selectedIds;
+      if (ids.length < 1) return state;
+      const firstFound = findElement(state, ids[0]);
+      if (!firstFound || firstFound.kind !== 'layer') return state;
+      const layerId = firstFound.layer.id;
+      const layer = state.layers.find((l) => l.id === layerId);
+      if (!layer) return state;
+      // Collect elements
+      const targets: CanvasElement[] = [];
+      for (const el of layer.elements) {
+        if (ids.includes(el.id)) targets.push(el);
+      }
+      if (targets.length === 0) return state;
+      // For a single group, flatten its children
+      const toFlatten = (targets.length === 1 && targets[0].type === 'group')
+        ? (targets[0] as GroupElement).children.map((c) => {
+          if (c.type === 'line') return { ...c, x: c.x + targets[0].x, y: c.y + targets[0].y, x2: c.x2 + targets[0].x, y2: c.y2 + targets[0].y };
+          return { ...c, x: c.x + targets[0].x, y: c.y + targets[0].y };
+        })
+        : targets;
+      // Rasterize all into pixel sets
+      const normalPixels: Set<string> = new Set();
+      const invertedPixels: Set<string> = new Set();
+      function flattenEl(el: CanvasElement) {
+        if (el.type === 'group') {
+          for (const c of (el as GroupElement).children) {
+            const abs = c.type === 'line'
+              ? { ...c, x: c.x + el.x, y: c.y + el.y, x2: c.x2 + el.x, y2: c.y2 + el.y }
+              : { ...c, x: c.x + el.x, y: c.y + el.y };
+            flattenEl(abs as CanvasElement);
+          }
+          return;
+        }
+        const inv = 'inverted' in el && !!(el as any).inverted;
+        const raster = rasterizeElementToPixels(el);
+        if (!raster) return;
+        const target = inv ? invertedPixels : normalPixels;
+        for (const [px, py] of raster.pixels) {
+          target.add(`${raster.x + px},${raster.y + py}`);
+        }
+      }
+      for (const el of toFlatten) flattenEl(el);
+      // Build result elements
+      const results: CanvasElement[] = [];
+      if (normalPixels.size > 0) {
+        const pts = [...normalPixels].map((s) => s.split(',').map(Number) as [number, number]);
+        let mx = Infinity, my = Infinity;
+        for (const [x, y] of pts) { if (x < mx) mx = x; if (y < my) my = y; }
+        const rel: [number, number][] = pts.map(([x, y]) => [x - mx, y - my]);
+        results.push({ id: nextId('pixels'), type: 'pixels', x: mx, y: my, visible: true, strokeWidth: 1, pixels: rel });
+      }
+      if (invertedPixels.size > 0) {
+        const pts = [...invertedPixels].map((s) => s.split(',').map(Number) as [number, number]);
+        let mx = Infinity, my = Infinity;
+        for (const [x, y] of pts) { if (x < mx) mx = x; if (y < my) my = y; }
+        const rel: [number, number][] = pts.map(([x, y]) => [x - mx, y - my]);
+        results.push({ id: nextId('pixels'), type: 'pixels', x: mx, y: my, visible: true, strokeWidth: 1, pixels: rel, inverted: true });
+      }
+      if (results.length === 0) return state;
+      // Replace targets with results
+      const idSet = new Set(ids);
+      const newElements: CanvasElement[] = [];
+      let inserted = false;
+      for (const el of layer.elements) {
+        if (idSet.has(el.id)) {
+          if (!inserted) { newElements.push(...results); inserted = true; }
+        } else {
+          newElements.push(el);
+        }
+      }
+      const newLayers = state.layers.map((l) => l.id === layerId ? { ...l, elements: newElements } : l);
+      return { ...state, layers: newLayers, selectedId: results[0].id, selectedIds: results.map((r) => r.id) };
     }
 
     default:

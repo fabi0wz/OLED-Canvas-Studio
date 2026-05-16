@@ -119,6 +119,7 @@ export function reduceScreen(state: AppState, action: Action): AppState {
         erasedPixels: target.erasedPixels,
         selectedLayerId: target.layers[0]?.id ?? '',
         selectedId: null,
+        selectedIds: [],
         editor: {
           ...state.editor,
           mode: 'static',
@@ -185,6 +186,7 @@ export function reduceScreen(state: AppState, action: Action): AppState {
         erasedPixels: active.erasedPixels,
         selectedLayerId: active.layers[0].id,
         selectedId: null,
+        selectedIds: [],
         editor: {
           ...state.editor,
           activeAnimationId: active.animations[0]?.id ?? null,

@@ -57,7 +57,18 @@ export function emitElement(out: string[], el: CanvasElement, lastFontRef: { fon
       break;
     }
     case 'pixels':
+      if (el.inverted) out.push(`  u8g2.setDrawColor(0);`);
       for (const [px, py] of el.pixels) out.push(`  u8g2.drawPixel(${el.x + px}, ${el.y + py});`);
+      if (el.inverted) out.push(`  u8g2.setDrawColor(1);`);
+      break;
+    case 'group':
+      out.push(`  // Group`);
+      for (const child of el.children) {
+        const shifted = child.type === 'line'
+          ? { ...child, x: child.x + el.x, y: child.y + el.y, x2: child.x2 + el.x, y2: child.y2 + el.y }
+          : { ...child, x: child.x + el.x, y: child.y + el.y };
+        emitElement(out, shifted as import('../types').CanvasElement, lastFontRef);
+      }
       break;
     case 'bitmap': {
       const varName = `bmp_${el.id.replace(/[^a-zA-Z0-9]/g, '_')}`;

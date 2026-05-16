@@ -5,7 +5,7 @@ import AnimationProperties from './AnimationProperties';
 import ElementProperties from './ElementProperties';
 
 export default function PropertiesPanel() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
 
   // Widget editing takes precedence
   const selectedWidget = state.editor.selectedWidgetId
@@ -20,6 +20,20 @@ export default function PropertiesPanel() {
       const anim = state.animations.find((a) => a.id === refEl.animationId);
       if (anim) return <AnimationProperties animationId={anim.id} />;
     }
+  }
+
+  // Multi-selection panel (more than 1 element)
+  if (state.selectedIds.length > 1) {
+    return (
+      <div className="panel properties-panel">
+        <h3>Selection</h3>
+        <p className="muted">{state.selectedIds.length} elements selected</p>
+        <div className="prop-actions" style={{ flexDirection: 'column', gap: 6 }}>
+          <button onClick={() => dispatch({ type: 'GROUP_ELEMENTS' })}>⊞ Group (Ctrl+G)</button>
+          <button onClick={() => dispatch({ type: 'FLATTEN_ELEMENTS' })}>⊟ Flatten (Ctrl+Shift+F)</button>
+        </div>
+      </div>
+    );
   }
 
   // Element selection (layers or animation frame)

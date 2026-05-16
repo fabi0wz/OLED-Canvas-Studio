@@ -25,9 +25,13 @@ export function emitScreen(
 
   // Bitmap data
   const bitmapEls: BitmapElement[] = [];
-  for (const l of layers) for (const el of l.elements) {
-    if (el.type === 'bitmap' && el.visible) bitmapEls.push(el);
+  function collectBitmaps(els: import('../types').CanvasElement[]) {
+    for (const el of els) {
+      if (el.type === 'bitmap' && el.visible) bitmapEls.push(el);
+      if (el.type === 'group') collectBitmaps(el.children);
+    }
   }
+  for (const l of layers) collectBitmaps(l.elements);
   if (bitmapEls.length > 0) {
     lines.push(`// Bitmap data for screen "${screen.name}"`);
     for (const bmp of bitmapEls) {

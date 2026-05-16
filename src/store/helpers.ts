@@ -1,6 +1,6 @@
 import type {
   CanvasElement, Layer, FrameAnimation, Frame,
-  ProceduralWidget, Screen, WidgetRefElement,
+  ProceduralWidget, Screen, WidgetRefElement, GroupElement,
 } from '../types';
 import type { AppState } from './types';
 import { uid } from './initialState';
@@ -45,6 +45,9 @@ export function cloneScreen(src: Screen, newName: string): Screen {
       }
       if (el.type === 'widgetRef') {
         return { ...el, id: uid('widgetref'), widgetId: idMap.get(el.widgetId) ?? el.widgetId };
+      }
+      if (el.type === 'group') {
+        return { ...el, id: uid('group'), children: (el as GroupElement).children.map((c) => ({ ...c, id: uid(c.type) })) };
       }
       return { ...el, id: uid(el.type) };
     }),
@@ -92,12 +95,19 @@ export function mapElementsInLayer(
   return layers.map((l) => (l.id === layerId ? { ...l, elements: fn(l.elements) } : l));
 }
 
-/** Map every element in every layer. */
+/** Map every element in every layer (including children of groups). */
 export function mapAllLayerElements(
   layers: Layer[],
   fn: (el: CanvasElement, layer: Layer) => CanvasElement,
 ): Layer[] {
-  return layers.map((l) => ({ ...l, elements: l.elements.map((el) => fn(el, l)) }));
+  function mapEl(el: CanvasElement, layer: Layer): CanvasElement {
+    const mapped = fn(el, layer);
+    if (mapped.type === 'group') {
+      return { ...mapped, children: (mapped as GroupElement).children.map((c) => fn(c, layer)) } as CanvasElement;
+    }
+    return mapped;
+  }
+  return layers.map((l) => ({ ...l, elements: l.elements.map((el) => mapEl(el, l)) }));
 }
 
 /** Map every element in every frame of every animation. */

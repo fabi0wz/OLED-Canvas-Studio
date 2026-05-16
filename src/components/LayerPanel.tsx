@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import type { TextElement, PixelsElement, AnimationRefElement, WidgetRefElement } from '../types';
+import type { TextElement, PixelsElement, AnimationRefElement, WidgetRefElement, GroupElement } from '../types';
 
 export default function LayerPanel() {
   const { state, dispatch } = useStore();
@@ -106,14 +106,20 @@ export default function LayerPanel() {
                     } else if (el.type === 'widgetRef') {
                       const wgt = state.widgets.find((w) => w.id === (el as WidgetRefElement).widgetId);
                       label = `WIDGET: ${wgt?.type ?? '?'}`;
+                    } else if (el.type === 'group') {
+                      label = `${(el as GroupElement).children.length} items`;
                     } else label = `(${el.x},${el.y})`;
                     return (
                       <li
                         key={el.id}
-                        className={el.id === state.selectedId ? 'selected' : ''}
+                        className={state.selectedIds.includes(el.id) ? 'selected' : ''}
                         onClick={(e) => {
                           e.stopPropagation();
-                          dispatch({ type: 'SELECT_ELEMENT', payload: el.id });
+                          if (e.shiftKey) {
+                            dispatch({ type: 'SELECT_ELEMENT_MULTI', payload: el.id });
+                          } else {
+                            dispatch({ type: 'SELECT_ELEMENT', payload: el.id });
+                          }
                           if (el.type === 'widgetRef') {
                             dispatch({ type: 'SELECT_WIDGET', payload: (el as WidgetRefElement).widgetId });
                           } else if (el.type === 'animationRef') {

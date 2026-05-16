@@ -1,5 +1,5 @@
 import { useStore } from '../../store';
-import type { CanvasElement, TextElement, RectElement, LineElement, CircleElement, PixelsElement, BitmapElement } from '../../types';
+import type { CanvasElement, TextElement, RectElement, LineElement, CircleElement, PixelsElement, BitmapElement, GroupElement } from '../../types';
 import { U8G2_FONTS, FONT_METRICS } from '../../types';
 
 interface Props {
@@ -133,6 +133,23 @@ export default function ElementProperties({ selected, containerLabel, layerId }:
           <label>Pixels</label>
           <span className="prop-value">{(selected as PixelsElement).pixels.length} drawn</span>
           <button style={{ marginTop: 4 }} onClick={() => update({ pixels: [] } as unknown as Partial<PixelsElement>)}>Clear Pixels</button>
+        </div>
+      )}
+
+      {selected.type === 'pixels' && (
+        <div className="prop-group"><label>Subtract (inverted)</label>
+          <input type="checkbox" checked={!!(selected as PixelsElement).inverted}
+            onChange={(e) => update({ inverted: e.target.checked } as Partial<PixelsElement>)} /></div>
+      )}
+
+      {selected.type === 'group' && (
+        <div className="prop-group">
+          <label>Group</label>
+          <span className="prop-value">{(selected as GroupElement).children.length} children</span>
+          <div className="btn-group" style={{ marginTop: 6 }}>
+            <button onClick={() => dispatch({ type: 'UNGROUP_ELEMENT', payload: selected.id })}>Ungroup</button>
+            <button onClick={() => dispatch({ type: 'FLATTEN_ELEMENTS' })}>Flatten</button>
+          </div>
         </div>
       )}
 
