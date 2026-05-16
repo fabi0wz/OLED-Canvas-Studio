@@ -18,6 +18,8 @@
     - [Build for production](#build-for-production)
   - [User Interface](#user-interface)
     - [Top Toolbar](#top-toolbar)
+    - [Scene Modes](#scene-modes)
+    - [Multi-Screen Manager](#multi-screen-manager)
     - [Workbench Panel](#workbench-panel)
     - [Canvas](#canvas)
     - [Layers Panel](#layers-panel)
@@ -32,6 +34,9 @@
     - [Freehand Draw (`D`)](#freehand-draw-d)
     - [Eraser (`E`)](#eraser-e)
     - [Import Bitmap (`I`)](#import-bitmap-i)
+  - [Frame-by-Frame Animations](#frame-by-frame-animations)
+  - [Procedural Widgets](#procedural-widgets)
+  - [Screen Transitions](#screen-transitions)
   - [Fonts](#fonts)
   - [Subtract (Inverted) Mode](#subtract-inverted-mode)
   - [Layers](#layers)
@@ -60,14 +65,19 @@ The canvas renders exactly what will appear on the real display — every pixel,
 |---|---|
 | **8 drawing tools** | Select, Text, Rectangle, Circle, Line, Freehand draw, Eraser, Bitmap import |
 | **6 pixel-accurate U8g2 fonts** | 5×7, 6×10, 7×13, 8×13, 9×15, 10×20 — rendered from official BDF files |
+| **Multi-screen projects** | Design multiple independent screens and navigate between them at runtime |
+| **Screen transitions** | 8 animated transition effects when switching screens (slide, wipe, fade) |
+| **Frame-by-frame animations** | Sprite-style animations with configurable per-frame duration and playback modes (loop, once, ping-pong) |
+| **Onion-skin preview** | See adjacent animation frames as a translucent overlay while editing |
+| **6 procedural widgets** | Analog Clock, Digital Clock, Progress Bar, Meter, Gauge, Battery — with live data binding |
 | **Subtract (inverted) mode** | Any shape can erase pixels instead of drawing them, for masking / cutout effects |
 | **Layer system** | Multiple named layers with per-layer visibility toggle and element reordering |
 | **Adjustable zoom** | 1× to 20× zoom with grid overlay option |
 | **Snap-to-grid** | Optional pixel snapping at 1, 2, 4, 8, or 16 px increments |
 | **Transform tools** | Flip H/V, rotate ±90°/180° for rectangles and circles |
 | **Resizable panels** | All three side panels and the code panel are drag-resizable and collapsible |
-| **U8g2 code generation** | One-click copy / save as `.ino` of complete Arduino sketch |
-| **Project save / load** | Save project as `.json`, reload later |
+| **U8g2 code generation** | One-click copy / save as `.ino` of complete Arduino sketch with screen navigation API |
+| **Project save / load** | Save project as `.json`, reload later — backward-compatible with single-screen projects |
 | **Live data placeholders** | Use `{var}` in text to mark runtime variable positions |
 | **8 display presets** | SSD1306 128×64, 128×32, 64×48, 72×40 · SH1106/SSD1309/SH1107 variants |
 
@@ -116,6 +126,8 @@ The top bar contains:
 |---|---|
 | **Logo** | OLED·CANVAS STUDIO branding |
 | **Tool buttons** | One button per drawing tool (keyboard shortcuts shown below each icon) |
+| **Scene mode tabs** | Switch between **static**, **animation**, and **widgets** editing modes |
+| **Playback controls** | Play/pause, previous/next frame, frame counter (visible in animation mode) |
 | **XY coordinates** | Live mouse position in display pixel coordinates |
 
 **Keyboard shortcuts:**
@@ -130,6 +142,42 @@ The top bar contains:
 | `D` | Freehand Draw |
 | `E` | Eraser |
 | `I` | Import Bitmap |
+
+---
+
+### Scene Modes
+
+![Scene mode tabs](docs/screenshots/12-scene-mode-tabs.png)
+
+The editor has three scene modes, toggled via the tabs in the top toolbar:
+
+| Mode | Purpose |
+|---|---|
+| **static** | Edit regular layers and elements (shapes, text, bitmaps) — the default mode |
+| **animation** | Create and edit frame-by-frame animations for the current screen |
+| **widgets** | Add and configure procedural widgets (clocks, gauges, etc.) for the current screen |
+
+Each screen maintains its own independent set of layers, animations, and widgets.
+
+---
+
+### Multi-Screen Manager
+
+![Screen manager](docs/screenshots/08-screen-manager.png)
+
+The screen tab bar sits below the top toolbar and lets you manage multiple independent screens in a single project.
+
+| Control | Action |
+|---|---|
+| **Screen tabs** | Click to switch screens. Double-click the name to rename. |
+| **`+ Screen`** | Add a new empty screen |
+| **`Duplicate`** | Clone the current screen with all its layers, animations, and widgets |
+| **`◀` / `▶`** | Reorder screens left / right |
+| **`Trans` dropdown** | Set the transition animation when navigating **into** this screen |
+| **`★ Default`** | Set this screen as the boot screen (shown on startup) |
+| **`✕`** | Delete this screen (at least one screen must remain) |
+
+The ★ badge on a tab indicates the default boot screen. Each screen has its own layers, animations, widgets, and erased-pixel mask.
 
 ---
 
@@ -221,8 +269,12 @@ The code panel at the bottom displays the **live-generated U8g2 Arduino sketch**
 The generated code includes:
 - `#include` statements for `Arduino.h`, `U8g2lib.h`, and `Wire.h`
 - The correct U8G2 display constructor for your chosen display
-- One `void draw<LayerName>()` function per layer
-- A `drawLayout()` orchestrator that clears the buffer, calls each layer, and sends to display
+- One `void draw<LayerName>()` function per layer, per screen
+- A `drawScreen_<name>()` function per screen that orchestrates its layers, animations, and widgets
+- A **screen navigation API**: `goToScreen(idx)`, `nextScreen()`, `prevScreen()`
+- Transition runtime code for all 8 animated transition effects
+- Animation playback logic using `millis()`-based frame timing
+- Procedural widget drawing functions with live data binding
 - Boilerplate `setup()` and `loop()` functions
 
 ---
@@ -252,6 +304,121 @@ Click and drag to erase pixels. The eraser works non-destructively — erased pi
 
 ### Import Bitmap (`I`)
 Import a monochrome bitmap image onto the canvas as a `bitmap` element.
+
+---
+
+## Frame-by-Frame Animations
+
+![Animation mode](docs/screenshots/09-animation-mode.png)
+
+Switch to the **animation** scene mode to create sprite-style frame-by-frame animations. Each animation is composed of multiple frames, and each frame can contain any standard drawing elements (shapes, text, bitmaps, pixels).
+
+### Creating an animation
+
+1. Click the **animation** tab in the top toolbar
+2. Click **+ Animation** in the left panel to create a new animation
+3. Draw elements on the canvas — they belong to the currently selected frame
+4. Click **+ Frame** to add more frames and draw different content on each
+
+### Animation controls
+
+| Control | Description |
+|---|---|
+| **Name** | Rename the animation |
+| **Offset X / Y** | Position offset applied to the entire animation on screen |
+| **Play mode** | `loop` (repeat forever), `once` (stop on last frame), or `ping-pong` (forward then backward) |
+| **Frame strip** | Visual list of all frames showing index, element count, and duration |
+| **Frame duration** | Per-frame display time in milliseconds (minimum 16 ms) |
+| **`+ Frame`** | Add a new empty frame |
+| **`Duplicate`** | Clone the current frame with all its elements |
+| **`Delete`** | Remove the current frame (at least one must remain) |
+| **`←` / `→`** | Reorder frames |
+
+### Playback
+
+When in animation mode, the top toolbar shows playback controls:
+- **`▶`** — play / pause the animation
+- **`⏮` / `⏭`** — step to previous / next frame
+- **Frame counter** — shows current frame number (e.g. `2/5`)
+
+### Onion skin
+
+The **Onion Skin** section lets you preview adjacent frames as a translucent overlay while editing:
+- **Prev** — show the previous frame
+- **Next** — show the next frame
+- **Opacity** — adjust overlay transparency (0 – 100%)
+
+### Generated code
+
+Each animation is rasterized to per-frame bitmaps stored as `PROGMEM` arrays. The generated `drawAnim_<id>()` function uses `millis()` to automatically advance frames at runtime, respecting the selected play mode.
+
+---
+
+## Procedural Widgets
+
+![Widgets mode](docs/screenshots/10-widgets-mode.png)
+
+Switch to the **widgets** scene mode to add runtime-rendered UI components that display live data. Unlike static shapes, widgets generate procedural C drawing code — they are not rasterized bitmaps.
+
+### Adding a widget
+
+1. Click the **widgets** tab in the top toolbar
+2. Click one of the 6 widget buttons in the **Widget Palette** to add it to the canvas
+3. Select a widget in the **Widgets in scene** list to edit its properties in the right panel
+
+### Widget types
+
+| Widget | Description |
+|---|---|
+| **Analog Clock** | Circle with hour/minute/second hands. Configurable: radius, tick marks, second hand |
+| **Digital Clock** | Time displayed as text. Configurable: format string (`HH:MM:SS`), font |
+| **Progress Bar** | Rectangular bar that fills based on a value. Configurable: width, height, horizontal or vertical orientation |
+| **Meter** | Segmented bar with configurable number of segments (2–32) |
+| **Gauge** | Circular dial with a needle. Configurable: radius, sweep angle (30°–360°), tick marks |
+| **Battery** | Battery-shaped icon with fill level |
+
+### Data binding
+
+Each widget has a **Value source** that determines where it gets its runtime value:
+
+| Source | Behaviour |
+|---|---|
+| **sim** | Uses a constant simulated value — useful for previewing the widget in the editor |
+| **time** | Reads the current time (seconds since midnight via `millis()`) |
+| **variable** | References a named C variable from your user code (e.g. `sensorValue`) |
+
+All widgets also have **min** / **max** fields to define the value range, and a **Sim value** slider for live preview in the editor.
+
+### Generated code
+
+Each visible widget generates a `drawWidget_<id>()` function that computes the normalized value and draws using U8g2 primitives (circles, lines, boxes, text). When the value source is `variable`, the generated code references your C variable directly.
+
+---
+
+## Screen Transitions
+
+When using multiple screens, each screen can specify a **transition animation** that plays when navigating **into** that screen. Set it via the **Trans** dropdown in the screen manager bar.
+
+| Transition | Effect |
+|---|---|
+| `instant` | No animation — immediate cut |
+| `slideLeft` | Previous screen slides off left, next slides in from right |
+| `slideRight` | Previous screen slides off right, next slides in from left |
+| `slideUp` | Previous screen slides off top, next slides in from bottom |
+| `slideDown` | Previous screen slides off bottom, next slides in from top |
+| `wipeLeft` | Vertical wipe from left to right |
+| `wipeRight` | Vertical wipe from right to left |
+| `fade` | Checkerboard fade pattern |
+
+The generated code includes a complete transition runtime and a navigation API:
+
+```cpp
+goToScreen(uint8_t idx);  // Navigate to screen by index (plays transition)
+nextScreen();              // Go to next screen (wraps around)
+prevScreen();              // Go to previous screen (wraps around)
+```
+
+You can call these from a `readScreenInput()` weak hook that the generated code provides for you to wire up button/input handling.
 
 ---
 
@@ -315,7 +482,9 @@ Changing the display preset updates the canvas dimensions and the U8G2 construct
 
 ## Project Save / Load
 
-Projects are saved as plain `.json` files containing all layers, elements, display config, and erased pixels. Use the **Save** and **Load** buttons in the Code panel. Projects are portable and can be committed to version control alongside your Arduino sketch.
+Projects are saved as plain `.json` files containing all screens, layers, elements, animations, widgets, display config, and erased pixels. Use the **Save** and **Load** buttons in the Code panel. Projects are portable and can be committed to version control alongside your Arduino sketch.
+
+Loading is backward-compatible: older single-screen project files are automatically upgraded to the multi-screen format.
 
 ---
 
