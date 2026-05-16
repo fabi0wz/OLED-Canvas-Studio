@@ -1,0 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap');
+
+:root {
+  /* Lab bench / hardware aesthetic */
+  --bg:           #14161a;   /* PCB matte black */
+  --bg-deep:      #0a0b0d;   /* under-component shadow */
+  --bg-panel:     #1c1f24;   /* anodized aluminum */
+  --bg-panel-2:   #23272e;   /* raised surface */
+  --bg-input:     #0f1114;   /* recessed input well */
+  --bg-canvas:    #08090b;   /* dead OLED */
+
+  --text:         #d7d3c8;   /* warm bone white (silk-screen) */
+  --text-muted:   #6b6f78;
+  --text-dim:     #44474d;
+
+  --accent:       #ffb627;   /* phosphor amber — LED indicator */
+  --accent-dim:   #7a5a18;
+  --oled:         #6df0c2;   /* OLED-on green/cyan */
+  --oled-dim:     #2a6450;
+  --signal:       #ff5b6b;   /* warning / record */
+  --danger:       #ff4d3a;
+
+  --border:       #2d3138;   /* engraved line */
+  --border-bright:#3a3f48;
+  --border-hot:   #ffb627;
+
+  --radius:       2px;       /* hardware = sharp */
+  --shadow-inset: inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.6);
+
+  --font-mono:    'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace;
+  --font-disp:    'Space Grotesk', 'Inter', system-ui, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background:
+    radial-gradient(ellipse at top, #1a1d22 0%, var(--bg) 60%, var(--bg-deep) 100%);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0.01em;
+}
+
+/* Subtle screen-print grain over everything */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(0deg,
+      rgba(255,255,255,0.012) 0px,
+      rgba(255,255,255,0.012) 1px,
+      transparent 1px,
+      transparent 3px);
+  z-index: 1000;
+  mix-blend-mode: overlay;
+}

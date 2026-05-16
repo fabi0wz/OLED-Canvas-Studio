@@ -1,0 +1,33 @@
+{
+  "name": "oled-canvas-studio",
+  "version": "1.0.0",
+  "description": "OLED Canvas Studio is a lightweight visual editor for designing monochrome embedded display interfaces directly in the browser.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fabi0wz/OLED-Canvas-Studio.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/fabi0wz/OLED-Canvas-Studio/issues"
+  },
+  "homepage": "https://github.com/fabi0wz/OLED-Canvas-Studio#readme",
+  "dependencies": {
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.13"
+  }
+}
