@@ -988,3 +988,82 @@ button:active {
 .screen-transition-label { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-dim); }
 .screen-transition-label select { background: var(--bg-deep); color: var(--text); border: 1px solid var(--border-bright); font-size: 11px; padding: 2px 4px; border-radius: 3px; }
 .project-name-input { background: var(--bg-deep); color: var(--text); border: 1px solid var(--border-bright); padding: 3px 6px; font-size: 11px; border-radius: 3px; width: 140px; margin-right: 4px; }
+
+/* ---------- File menu (TopToolbar) ---------- */
+.file-menu-wrap { position: relative; display: inline-flex; }
+.file-menu-btn { min-width: 44px; }
+.file-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 100;
+  min-width: 280px;
+  background: var(--bg-panel-2, var(--bg-panel));
+  border: 1px solid var(--border-bright);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  padding: 4px 0;
+  font-size: 12px;
+}
+.file-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  gap: 10px;
+}
+.file-menu-item:hover:not(:disabled) { background: var(--bg-deep); color: var(--accent); }
+.file-menu-item:disabled { opacity: 0.4; cursor: not-allowed; }
+.fmi-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fmi-shortcut {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+.file-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.file-menu-heading {
+  padding: 8px 12px 4px;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.file-menu-empty {
+  padding: 4px 12px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.recent-item { position: relative; padding-right: 28px; }
+.recent-name { font-size: 12px; }
+.recent-badge { color: var(--accent); font-size: 10px; }
+.recent-time { font-size: 10px; }
+.recent-current { background: rgba(255,182,39,0.05); }
+.recent-forget {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.recent-forget:hover { background: var(--bg-deep); color: var(--accent); }

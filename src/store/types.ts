@@ -103,4 +103,8 @@ export type Action =
   | { type: 'SELECT_ELEMENTS'; payload: string[] }
   | { type: 'GROUP_ELEMENTS' }
   | { type: 'UNGROUP_ELEMENT'; payload: string }
-  | { type: 'FLATTEN_ELEMENTS' };
+  | { type: 'FLATTEN_ELEMENTS' }
+  // ----- History controls (handled by the history meta-reducer) -----
+  | { type: 'UNDO' }
+  | { type: 'REDO' }
+  | { type: 'RESET_HISTORY' };

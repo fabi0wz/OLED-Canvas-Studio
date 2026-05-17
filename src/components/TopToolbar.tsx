@@ -1,6 +1,7 @@
 import { useStore, type ActiveTool, type SceneMode } from '../store';
 import { useRef } from 'react';
 import { uid } from '../utils/uid';
+import FileMenu from './FileMenu';
 
 const tools: { id: ActiveTool; label: string; icon: string; shortcut?: string }[] = [
   {
@@ -48,7 +49,7 @@ const tools: { id: ActiveTool; label: string; icon: string; shortcut?: string }[
 ];
 
 export default function TopToolbar() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, canUndo, canRedo } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleImageImport(e: React.ChangeEvent<HTMLInputElement>) {
@@ -126,6 +127,26 @@ export default function TopToolbar() {
       </div>
 
       <div className="top-toolbar-tools">
+        <FileMenu />
+        <button
+          className="tool-btn"
+          onClick={() => dispatch({ type: 'UNDO' })}
+          disabled={!canUndo}
+          title="Undo (Ctrl+Z)"
+        >
+          <span className="tool-icon" dangerouslySetInnerHTML={{ __html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>` }} />
+          <span className="tool-key">⌘Z</span>
+        </button>
+        <button
+          className="tool-btn"
+          onClick={() => dispatch({ type: 'REDO' })}
+          disabled={!canRedo}
+          title="Redo (Ctrl+Shift+Z)"
+        >
+          <span className="tool-icon" dangerouslySetInnerHTML={{ __html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 15-6.7L21 13"/></svg>` }} />
+          <span className="tool-key">⇧⌘Z</span>
+        </button>
+        <span className="tool-divider" />
         {tools.map((tool) => (
           <button
             key={tool.id}

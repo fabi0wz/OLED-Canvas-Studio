@@ -15,6 +15,18 @@ export function useCanvasKeyboard(
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
+      // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo.
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        dispatch({ type: 'UNDO' });
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && e.key.toLowerCase() === 'z') || (!e.shiftKey && e.key.toLowerCase() === 'y'))) {
+        e.preventDefault();
+        dispatch({ type: 'REDO' });
+        return;
+      }
+
       // Ctrl+G = group, Ctrl+Shift+G = ungroup, Ctrl+Shift+F = flatten
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g' && !e.shiftKey) {
         e.preventDefault();
