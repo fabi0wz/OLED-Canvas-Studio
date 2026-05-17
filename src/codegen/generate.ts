@@ -48,17 +48,8 @@ export function generateU8g2Code(opts: CodegenOptions): string {
   }
   lines.push('// =============================================================');
   lines.push('');
-  lines.push('#include <Arduino.h>');
-  lines.push('#include <U8g2lib.h>');
-  lines.push('#include <Wire.h>');
-  lines.push('#include <string.h>');
-  lines.push('#include <math.h>');
-  lines.push('');
-  lines.push('// --- Display constructor -------------------------------------');
-  lines.push(getU8g2Constructor(display));
-  lines.push('');
 
-  // Live-data placeholders
+  // Collect placeholder vars first (needed for feature flags)
   const placeholderVars = new Set<string>();
   for (const s of screens) {
     for (const l of s.layers) for (const el of l.elements) {
@@ -67,6 +58,38 @@ export function generateU8g2Code(opts: CodegenOptions): string {
       }
     }
   }
+
+  lines.push('#include <Arduino.h>');
+  lines.push('#include <U8g2lib.h>');
+
+  // Feature flags — used to conditionally emit includes and runtime blocks
+  const hasMultipleScreens = screens.length > 1;
+  const hasNonInstantTransitions = hasMultipleScreens && screens.some(s => s.transition !== 'instant');
+  const hasTrig = screens.some(s =>
+    s.widgets.some(w => w.visible && (w.type === 'gauge' || w.type === 'analogClock')),
+  );
+  const hasAnimations = screens.some(s =>
+    s.animations.some(a => a.visible && a.frames.length > 0),
+  );
+  const hasTimeWidgets = screens.some(s =>
+    s.widgets.some(w => w.visible && w.valueSource === 'time'),
+  );
+  // snprintf / string.h needed for text placeholders, digital clock, and screen transitions (memcpy)
+  const hasSnprintf = placeholderVars.size > 0 || screens.some(s =>
+    s.widgets.some(w => w.visible && w.type === 'digitalClock'),
+  );
+  const needsStringH = hasSnprintf || (hasMultipleScreens && hasNonInstantTransitions);
+  // Dirty-flag optimisation: only skip redraw if nothing changes frame-to-frame
+  const canUseDirtyFlag = !hasAnimations && !hasTimeWidgets;
+
+  if (needsStringH) lines.push('#include <string.h>');
+  if (hasTrig) lines.push('#include <math.h>');
+  lines.push('');
+  lines.push('// --- Display constructor -------------------------------------');
+  lines.push(getU8g2Constructor(display));
+  lines.push('');
+
+  // Live-data placeholders
   if (placeholderVars.size > 0) {
     lines.push('// --- Live text-data variables -------------------------------');
     lines.push('// Update these from your sketch to display real values.');
@@ -90,26 +113,33 @@ export function generateU8g2Code(opts: CodegenOptions): string {
     lines.push('');
   }
 
-  // Transition runtime
-  lines.push('// --- Screen transition runtime ------------------------------');
-  lines.push('enum ScreenTransitionKind {');
-  lines.push('  TRANS_INSTANT = 0,');
-  lines.push('  TRANS_SLIDE_LEFT,');
-  lines.push('  TRANS_SLIDE_RIGHT,');
-  lines.push('  TRANS_SLIDE_UP,');
-  lines.push('  TRANS_SLIDE_DOWN,');
-  lines.push('  TRANS_WIPE_LEFT,');
-  lines.push('  TRANS_WIPE_RIGHT,');
-  lines.push('  TRANS_FADE,');
-  lines.push('};');
-  lines.push('');
-  lines.push('#ifndef SCREEN_TRANSITION_STEPS');
-  lines.push('#define SCREEN_TRANSITION_STEPS 12');
-  lines.push('#endif');
-  lines.push('#ifndef SCREEN_TRANSITION_DELAY_MS');
-  lines.push('#define SCREEN_TRANSITION_DELAY_MS 15');
-  lines.push('#endif');
-  lines.push('');
+  // Transition runtime — only when multiple screens exist and at least one uses animation
+  if (hasNonInstantTransitions) {
+    lines.push('// --- Screen transition runtime ------------------------------');
+    lines.push('enum ScreenTransitionKind {');
+    lines.push('  TRANS_INSTANT = 0,');
+    lines.push('  TRANS_SLIDE_LEFT,');
+    lines.push('  TRANS_SLIDE_RIGHT,');
+    lines.push('  TRANS_SLIDE_UP,');
+    lines.push('  TRANS_SLIDE_DOWN,');
+    lines.push('  TRANS_WIPE_LEFT,');
+    lines.push('  TRANS_WIPE_RIGHT,');
+    lines.push('  TRANS_FADE,');
+    lines.push('};');
+    lines.push('');
+    lines.push('#ifndef SCREEN_TRANSITION_STEPS');
+    lines.push('#define SCREEN_TRANSITION_STEPS 12');
+    lines.push('#endif');
+    lines.push('#ifndef SCREEN_TRANSITION_DELAY_MS');
+    lines.push('#define SCREEN_TRANSITION_DELAY_MS 15');
+    lines.push('#endif');
+    lines.push('');
+  } else if (hasMultipleScreens) {
+    // Multiple screens but all transitions are instant — only need the enum constant
+    lines.push('// --- Screen transition (instant only) -----------------------');
+    lines.push('enum ScreenTransitionKind { TRANS_INSTANT = 0 };');
+    lines.push('');
+  }
 
   // Per-screen emission
   const drawScreenFns: string[] = [];
@@ -120,159 +150,182 @@ export function generateU8g2Code(opts: CodegenOptions): string {
   // Screen registry & navigation
   lines.push('');
   lines.push('// --- Screen registry & navigation ---------------------------');
-  lines.push('typedef void (*ScreenRenderFn)();');
-  lines.push(`#define NUM_SCREENS ${screens.length}`);
-  lines.push('static const ScreenRenderFn screenRenderFns[NUM_SCREENS] = {');
-  for (const fn of drawScreenFns) lines.push(`  ${fn},`);
-  lines.push('};');
-  lines.push('static const uint8_t screenTransitions[NUM_SCREENS] = {');
-  for (const s of screens) lines.push(`  ${transitionEnum(s.transition)},`);
-  lines.push('};');
-  lines.push('static const char* const screenNames[NUM_SCREENS] = {');
-  for (const s of screens) lines.push(`  ${JSON.stringify(s.name)},`);
-  lines.push('};');
-  lines.push('');
-  lines.push(`uint8_t currentScreen = ${defaultIdx};`);
-  lines.push('');
-  lines.push('/** Render currently-active screen to the display buffer (does NOT sendBuffer). */');
-  lines.push('static void renderCurrentScreenToBuffer() {');
-  lines.push('  u8g2.clearBuffer();');
-  lines.push('  screenRenderFns[currentScreen]();');
-  lines.push('}');
-  lines.push('');
-  lines.push('/** Returns true if the device buffer pointer & dimensions are known. */');
-  lines.push('static inline uint16_t __bufLen() {');
-  lines.push('  return (uint16_t)(u8g2.getBufferTileWidth() * u8g2.getBufferTileHeight() * 8);');
-  lines.push('}');
-  lines.push('');
-  lines.push('/** Read a single pixel out of a u8g2 page-buffer snapshot. */');
-  lines.push('static inline bool __readSnapPix(const uint8_t* buf, uint16_t bw, uint8_t x, uint8_t y) {');
-  lines.push('  const uint16_t bytesPerRow = bw;');
-  lines.push('  const uint16_t idx = (uint16_t)(y >> 3) * bytesPerRow + x;');
-  lines.push('  return (buf[idx] >> (y & 7)) & 0x01;');
-  lines.push('}');
-  lines.push('');
-  lines.push('static void __drawSnap(const uint8_t* buf, int16_t ox, int16_t oy) {');
-  lines.push('  const uint16_t bw = u8g2.getBufferTileWidth() * 8;');
-  lines.push('  const uint16_t bh = u8g2.getBufferTileHeight() * 8;');
-  lines.push('  const int16_t dw = u8g2.getDisplayWidth();');
-  lines.push('  const int16_t dh = u8g2.getDisplayHeight();');
-  lines.push('  for (int16_t y = 0; y < (int16_t)bh; y++) {');
-  lines.push('    int16_t dy = y + oy;');
-  lines.push('    if (dy < 0 || dy >= dh) continue;');
-  lines.push('    for (int16_t x = 0; x < (int16_t)bw; x++) {');
-  lines.push('      int16_t dx = x + ox;');
-  lines.push('      if (dx < 0 || dx >= dw) continue;');
-  lines.push('      if (__readSnapPix(buf, bw, (uint8_t)x, (uint8_t)y)) u8g2.drawPixel(dx, dy);');
-  lines.push('    }');
-  lines.push('  }');
-  lines.push('}');
-  lines.push('');
-  lines.push('/** Animate a transition between two snapshot buffers (prev → next). */');
-  lines.push('static void runTransition(uint8_t kind, const uint8_t* prev, const uint8_t* next) {');
-  lines.push('  if (kind == TRANS_INSTANT) {');
-  lines.push('    u8g2.clearBuffer();');
-  lines.push('    __drawSnap(next, 0, 0);');
-  lines.push('    u8g2.sendBuffer();');
-  lines.push('    return;');
-  lines.push('  }');
-  lines.push('  const int16_t dw = u8g2.getDisplayWidth();');
-  lines.push('  const int16_t dh = u8g2.getDisplayHeight();');
-  lines.push('  for (uint8_t step = 1; step <= SCREEN_TRANSITION_STEPS; step++) {');
-  lines.push('    const float t = (float)step / (float)SCREEN_TRANSITION_STEPS;');
-  lines.push('    u8g2.clearBuffer();');
-  lines.push('    switch (kind) {');
-  lines.push('      case TRANS_SLIDE_LEFT: {');
-  lines.push('        int16_t shift = (int16_t)(t * dw);');
-  lines.push('        __drawSnap(prev, -shift, 0);');
-  lines.push('        __drawSnap(next, dw - shift, 0);');
-  lines.push('      } break;');
-  lines.push('      case TRANS_SLIDE_RIGHT: {');
-  lines.push('        int16_t shift = (int16_t)(t * dw);');
-  lines.push('        __drawSnap(prev, shift, 0);');
-  lines.push('        __drawSnap(next, shift - dw, 0);');
-  lines.push('      } break;');
-  lines.push('      case TRANS_SLIDE_UP: {');
-  lines.push('        int16_t shift = (int16_t)(t * dh);');
-  lines.push('        __drawSnap(prev, 0, -shift);');
-  lines.push('        __drawSnap(next, 0, dh - shift);');
-  lines.push('      } break;');
-  lines.push('      case TRANS_SLIDE_DOWN: {');
-  lines.push('        int16_t shift = (int16_t)(t * dh);');
-  lines.push('        __drawSnap(prev, 0, shift);');
-  lines.push('        __drawSnap(next, 0, shift - dh);');
-  lines.push('      } break;');
-  lines.push('      case TRANS_WIPE_LEFT: {');
-  lines.push('        int16_t cut = (int16_t)(t * dw);');
-  lines.push('        const uint16_t bw = u8g2.getBufferTileWidth() * 8;');
-  lines.push('        for (int16_t y = 0; y < dh; y++) {');
-  lines.push('          for (int16_t x = 0; x < dw; x++) {');
-  lines.push('            const uint8_t* src = (x < cut) ? next : prev;');
-  lines.push('            if (__readSnapPix(src, bw, (uint8_t)x, (uint8_t)y)) u8g2.drawPixel(x, y);');
-  lines.push('          }');
-  lines.push('        }');
-  lines.push('      } break;');
-  lines.push('      case TRANS_WIPE_RIGHT: {');
-  lines.push('        int16_t cut = (int16_t)((1.0f - t) * dw);');
-  lines.push('        const uint16_t bw = u8g2.getBufferTileWidth() * 8;');
-  lines.push('        for (int16_t y = 0; y < dh; y++) {');
-  lines.push('          for (int16_t x = 0; x < dw; x++) {');
-  lines.push('            const uint8_t* src = (x >= cut) ? next : prev;');
-  lines.push('            if (__readSnapPix(src, bw, (uint8_t)x, (uint8_t)y)) u8g2.drawPixel(x, y);');
-  lines.push('          }');
-  lines.push('        }');
-  lines.push('      } break;');
-  lines.push('      case TRANS_FADE: {');
-  lines.push('        const uint16_t bw = u8g2.getBufferTileWidth() * 8;');
-  lines.push('        for (int16_t y = 0; y < dh; y++) {');
-  lines.push('          for (int16_t x = 0; x < dw; x++) {');
-  lines.push('            const bool useNext = (((x + y) & 1) ? (t > 0.25f) : (t > 0.75f));');
-  lines.push('            const uint8_t* src = useNext ? next : prev;');
-  lines.push('            if (__readSnapPix(src, bw, (uint8_t)x, (uint8_t)y)) u8g2.drawPixel(x, y);');
-  lines.push('          }');
-  lines.push('        }');
-  lines.push('      } break;');
-  lines.push('      default: __drawSnap(next, 0, 0); break;');
-  lines.push('    }');
-  lines.push('    u8g2.sendBuffer();');
-  lines.push('    delay(SCREEN_TRANSITION_DELAY_MS);');
-  lines.push('  }');
-  lines.push('  u8g2.clearBuffer();');
-  lines.push('  __drawSnap(next, 0, 0);');
-  lines.push('  u8g2.sendBuffer();');
-  lines.push('}');
-  lines.push('');
-  lines.push('/** Switch to screen `idx`, animating with the transition of the *target* screen. */');
-  lines.push('void goToScreen(uint8_t idx) {');
-  lines.push('  if (idx >= NUM_SCREENS || idx == currentScreen) return;');
-  const snapSize = Math.ceil(display.width * display.height / 8);
-  lines.push(`  static uint8_t __prevSnap[${snapSize}];`);
-  lines.push(`  static uint8_t __nextSnap[${snapSize}];`);
-  lines.push('  const uint16_t blen = __bufLen();');
-  lines.push(`  const uint16_t copyLen = (blen > ${snapSize}) ? ${snapSize} : blen;`);
-  lines.push('  renderCurrentScreenToBuffer();');
-  lines.push('  memcpy(__prevSnap, u8g2.getBufferPtr(), copyLen);');
-  lines.push('  uint8_t kind = screenTransitions[idx];');
-  lines.push('  currentScreen = idx;');
-  lines.push('  renderCurrentScreenToBuffer();');
-  lines.push('  memcpy(__nextSnap, u8g2.getBufferPtr(), copyLen);');
-  lines.push('  runTransition(kind, __prevSnap, __nextSnap);');
-  lines.push('}');
-  lines.push('');
-  lines.push('/** Advance to the next screen (wraps around). */');
-  lines.push('void nextScreen() {');
-  lines.push('  uint8_t idx = (currentScreen + 1) % NUM_SCREENS;');
-  lines.push('  goToScreen(idx);');
-  lines.push('}');
-  lines.push('');
-  lines.push('/** Go to previous screen (wraps around). */');
-  lines.push('void prevScreen() {');
-  lines.push('  uint8_t idx = (currentScreen == 0) ? (NUM_SCREENS - 1) : (currentScreen - 1);');
-  lines.push('  goToScreen(idx);');
-  lines.push('}');
-  lines.push('');
-  lines.push('int8_t __attribute__((weak)) readScreenInput() { return 0; }');
-  lines.push('');
+
+  if (hasMultipleScreens) {
+    lines.push('typedef void (*ScreenRenderFn)();');
+    lines.push(`#define NUM_SCREENS ${screens.length}`);
+    lines.push('static const ScreenRenderFn screenRenderFns[NUM_SCREENS] = {');
+    for (const fn of drawScreenFns) lines.push(`  ${fn},`);
+    lines.push('};');
+    lines.push('static const uint8_t screenTransitions[NUM_SCREENS] = {');
+    for (const s of screens) lines.push(`  ${transitionEnum(s.transition)},`);
+    lines.push('};');
+    lines.push('static const char* const screenNames[NUM_SCREENS] = {');
+    for (const s of screens) lines.push(`  ${JSON.stringify(s.name)},`);
+    lines.push('};');
+    lines.push('');
+    lines.push(`uint8_t currentScreen = ${defaultIdx};`);
+    lines.push('');
+    lines.push('/** Render currently-active screen to the display buffer (does NOT sendBuffer). */');
+    lines.push('static void renderCurrentScreenToBuffer() {');
+    lines.push('  u8g2.clearBuffer();');
+    lines.push('  screenRenderFns[currentScreen]();');
+    lines.push('}');
+  } else {
+    // Single screen — no registry overhead
+    lines.push('/** Render the screen to the display buffer (does NOT sendBuffer). */');
+    lines.push('static void renderCurrentScreenToBuffer() {');
+    lines.push('  u8g2.clearBuffer();');
+    lines.push(`  ${drawScreenFns[0]}();`);
+    lines.push('}');
+  }
+
+  if (hasMultipleScreens) {
+    lines.push('');
+    lines.push('/** Returns true if the device buffer pointer & dimensions are known. */');
+    lines.push('static inline uint16_t __bufLen() {');
+    lines.push('  return (uint16_t)(u8g2.getBufferTileWidth() * u8g2.getBufferTileHeight() * 8);');
+    lines.push('}');
+    lines.push('');
+    lines.push('/** Read a single pixel out of a u8g2 page-buffer snapshot. */');
+    lines.push('static inline bool __readSnapPix(const uint8_t* buf, uint16_t bw, uint8_t x, uint8_t y) {');
+    lines.push('  const uint16_t bytesPerRow = bw;');
+    lines.push('  const uint16_t idx = (uint16_t)(y >> 3) * bytesPerRow + x;');
+    lines.push('  return (buf[idx] >> (y & 7)) & 0x01;');
+    lines.push('}');
+    lines.push('');
+    lines.push('static void __drawSnap(const uint8_t* buf, int16_t ox, int16_t oy) {');
+    lines.push('  const uint16_t bw = u8g2.getBufferTileWidth() * 8;');
+    lines.push('  const uint16_t bh = u8g2.getBufferTileHeight() * 8;');
+    lines.push('  const int16_t dw = u8g2.getDisplayWidth();');
+    lines.push('  const int16_t dh = u8g2.getDisplayHeight();');
+    lines.push('  for (int16_t y = 0; y < (int16_t)bh; y++) {');
+    lines.push('    int16_t dy = y + oy;');
+    lines.push('    if (dy < 0 || dy >= dh) continue;');
+    lines.push('    for (int16_t x = 0; x < (int16_t)bw; x++) {');
+    lines.push('      int16_t dx = x + ox;');
+    lines.push('      if (dx < 0 || dx >= dw) continue;');
+    lines.push('      if (__readSnapPix(buf, bw, (uint8_t)x, (uint8_t)y)) u8g2.drawPixel(dx, dy);');
+    lines.push('    }');
+    lines.push('  }');
+    lines.push('}');
+    lines.push('');
+  }
+
+  if (hasNonInstantTransitions) {
+    lines.push('/** Animate a transition between two snapshot buffers (prev → next). */');
+    lines.push('static void runTransition(uint8_t kind, const uint8_t* prev, const uint8_t* next) {');
+    lines.push('  if (kind == TRANS_INSTANT) {');
+    lines.push('    u8g2.clearBuffer();');
+    lines.push('    __drawSnap(next, 0, 0);');
+    lines.push('    u8g2.sendBuffer();');
+    lines.push('    return;');
+    lines.push('  }');
+    lines.push('  const int16_t dw = u8g2.getDisplayWidth();');
+    lines.push('  const int16_t dh = u8g2.getDisplayHeight();');
+    lines.push('  for (uint8_t step = 1; step <= SCREEN_TRANSITION_STEPS; step++) {');
+    lines.push('    const float t = (float)step / (float)SCREEN_TRANSITION_STEPS;');
+    lines.push('    u8g2.clearBuffer();');
+    lines.push('    switch (kind) {');
+    lines.push('      case TRANS_SLIDE_LEFT: {');
+    lines.push('        int16_t shift = (int16_t)(t * dw);');
+    lines.push('        __drawSnap(prev, -shift, 0);');
+    lines.push('        __drawSnap(next, dw - shift, 0);');
+    lines.push('      } break;');
+    lines.push('      case TRANS_SLIDE_RIGHT: {');
+    lines.push('        int16_t shift = (int16_t)(t * dw);');
+    lines.push('        __drawSnap(prev, shift, 0);');
+    lines.push('        __drawSnap(next, shift - dw, 0);');
+    lines.push('      } break;');
+    lines.push('      case TRANS_SLIDE_UP: {');
+    lines.push('        int16_t shift = (int16_t)(t * dh);');
+    lines.push('        __drawSnap(prev, 0, -shift);');
+    lines.push('        __drawSnap(next, 0, dh - shift);');
+    lines.push('      } break;');
+    lines.push('      case TRANS_SLIDE_DOWN: {');
+    lines.push('        int16_t shift = (int16_t)(t * dh);');
+    lines.push('        __drawSnap(prev, 0, shift);');
+    lines.push('        __drawSnap(next, 0, shift - dh);');
+    lines.push('      } break;');
+    lines.push('      case TRANS_WIPE_LEFT: {');
+    lines.push('        int16_t cut = (int16_t)(t * dw);');
+    lines.push('        const uint16_t bw = u8g2.getBufferTileWidth() * 8;');
+    lines.push('        for (int16_t y = 0; y < dh; y++) {');
+    lines.push('          for (int16_t x = 0; x < dw; x++) {');
+    lines.push('            const uint8_t* src = (x < cut) ? next : prev;');
+    lines.push('            if (__readSnapPix(src, bw, (uint8_t)x, (uint8_t)y)) u8g2.drawPixel(x, y);');
+    lines.push('          }');
+    lines.push('        }');
+    lines.push('      } break;');
+    lines.push('      case TRANS_WIPE_RIGHT: {');
+    lines.push('        int16_t cut = (int16_t)((1.0f - t) * dw);');
+    lines.push('        const uint16_t bw = u8g2.getBufferTileWidth() * 8;');
+    lines.push('        for (int16_t y = 0; y < dh; y++) {');
+    lines.push('          for (int16_t x = 0; x < dw; x++) {');
+    lines.push('            const uint8_t* src = (x >= cut) ? next : prev;');
+    lines.push('            if (__readSnapPix(src, bw, (uint8_t)x, (uint8_t)y)) u8g2.drawPixel(x, y);');
+    lines.push('          }');
+    lines.push('        }');
+    lines.push('      } break;');
+    lines.push('      case TRANS_FADE: {');
+    lines.push('        const uint16_t bw = u8g2.getBufferTileWidth() * 8;');
+    lines.push('        for (int16_t y = 0; y < dh; y++) {');
+    lines.push('          for (int16_t x = 0; x < dw; x++) {');
+    lines.push('            const bool useNext = (((x + y) & 1) ? (t > 0.25f) : (t > 0.75f));');
+    lines.push('            const uint8_t* src = useNext ? next : prev;');
+    lines.push('            if (__readSnapPix(src, bw, (uint8_t)x, (uint8_t)y)) u8g2.drawPixel(x, y);');
+    lines.push('          }');
+    lines.push('        }');
+    lines.push('      } break;');
+    lines.push('      default: __drawSnap(next, 0, 0); break;');
+    lines.push('    }');
+    lines.push('    u8g2.sendBuffer();');
+    lines.push('    delay(SCREEN_TRANSITION_DELAY_MS);');
+    lines.push('  }');
+    lines.push('  u8g2.clearBuffer();');
+    lines.push('  __drawSnap(next, 0, 0);');
+    lines.push('  u8g2.sendBuffer();');
+    lines.push('}');
+    lines.push('');
+  }
+
+  if (hasMultipleScreens) {
+    lines.push('/** Switch to screen `idx`, animating with the transition of the *target* screen. */');
+    lines.push('void goToScreen(uint8_t idx) {');
+    lines.push('  if (idx >= NUM_SCREENS || idx == currentScreen) return;');
+    const snapSize = Math.ceil(display.width * display.height / 8);
+    lines.push(`  static uint8_t __prevSnap[${snapSize}];`);
+    lines.push(`  static uint8_t __nextSnap[${snapSize}];`);
+    if (hasNonInstantTransitions) {
+      lines.push('  const uint16_t blen = __bufLen();');
+      lines.push(`  const uint16_t copyLen = (blen > ${snapSize}) ? ${snapSize} : blen;`);
+      lines.push('  renderCurrentScreenToBuffer();');
+      lines.push('  memcpy(__prevSnap, u8g2.getBufferPtr(), copyLen);');
+      lines.push('  uint8_t kind = screenTransitions[idx];');
+      lines.push('  currentScreen = idx;');
+      lines.push('  renderCurrentScreenToBuffer();');
+      lines.push('  memcpy(__nextSnap, u8g2.getBufferPtr(), copyLen);');
+      lines.push('  runTransition(kind, __prevSnap, __nextSnap);');
+    } else {
+      lines.push('  currentScreen = idx;');
+    }
+    lines.push('}');
+    lines.push('');
+    lines.push('/** Advance to the next screen (wraps around). */');
+    lines.push('void nextScreen() {');
+    lines.push('  uint8_t idx = (currentScreen + 1) % NUM_SCREENS;');
+    lines.push('  goToScreen(idx);');
+    lines.push('}');
+    lines.push('');
+    lines.push('/** Go to previous screen (wraps around). */');
+    lines.push('void prevScreen() {');
+    lines.push('  uint8_t idx = (currentScreen == 0) ? (NUM_SCREENS - 1) : (currentScreen - 1);');
+    lines.push('  goToScreen(idx);');
+    lines.push('}');
+    lines.push('');
+    lines.push('int8_t __attribute__((weak)) readScreenInput() { return 0; }');
+    lines.push('');
+  }
 
   // setup / loop
   lines.push('void setup() {');
@@ -282,11 +335,35 @@ export function generateU8g2Code(opts: CodegenOptions): string {
   lines.push('}');
   lines.push('');
   lines.push('void loop() {');
-  lines.push('  int8_t nav = readScreenInput();');
-  lines.push('  if (nav > 0) nextScreen();');
-  lines.push('  else if (nav < 0) prevScreen();');
-  lines.push('  renderCurrentScreenToBuffer();');
-  lines.push('  u8g2.sendBuffer();');
+  if (hasMultipleScreens) {
+    lines.push('  int8_t nav = readScreenInput();');
+    if (canUseDirtyFlag) {
+      lines.push('  static bool __dirty = true;');
+      lines.push('  if (nav > 0) { nextScreen(); __dirty = true; }');
+      lines.push('  else if (nav < 0) { prevScreen(); __dirty = true; }');
+      lines.push('  if (__dirty) {');
+      lines.push('    renderCurrentScreenToBuffer();');
+      lines.push('    u8g2.sendBuffer();');
+      lines.push('    __dirty = false;');
+      lines.push('  }');
+    } else {
+      lines.push('  if (nav > 0) nextScreen();');
+      lines.push('  else if (nav < 0) prevScreen();');
+      lines.push('  renderCurrentScreenToBuffer();');
+      lines.push('  u8g2.sendBuffer();');
+    }
+  } else if (canUseDirtyFlag) {
+    lines.push('  // Static screen — only redraw once; set __dirty = true when your data changes.');
+    lines.push('  static bool __dirty = true;');
+    lines.push('  if (__dirty) {');
+    lines.push('    renderCurrentScreenToBuffer();');
+    lines.push('    u8g2.sendBuffer();');
+    lines.push('    __dirty = false;');
+    lines.push('  }');
+  } else {
+    lines.push('  renderCurrentScreenToBuffer();');
+    lines.push('  u8g2.sendBuffer();');
+  }
   lines.push('  delay(16);');
   lines.push('}');
 

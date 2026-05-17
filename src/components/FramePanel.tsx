@@ -1,5 +1,8 @@
 import { useStore } from '../store';
-import type { FrameAnimation, AnimationPlayMode } from '../types';
+import type { FrameAnimation, AnimationPlayMode, WidgetType } from '../types';
+import { WIDGET_LABELS } from '../types';
+
+const WIDGET_PALETTE: WidgetType[] = ['analogClock', 'digitalClock', 'progressBar', 'meter', 'gauge', 'battery'];
 
 /**
  * Frame-by-frame animation editor: list of animations, frame strip of the
@@ -16,6 +19,40 @@ export default function FramePanel() {
 
       <div className="layer-controls">
         <button onClick={() => dispatch({ type: 'ADD_ANIMATION' })} title="Add animation">+ Animation</button>
+      </div>
+
+      {/* Where new shapes (rect/line/text/etc.) go while in animation mode.
+          Lets you combine static UI design and per-frame animation in one place. */}
+      <div className="prop-group" style={{ marginTop: 8 }}>
+        <label>New element target</label>
+        <div className="btn-group">
+          <button
+            className={state.editor.addTarget === 'frame' ? 'btn-active' : ''}
+            onClick={() => dispatch({ type: 'SET_ADD_TARGET', payload: 'frame' })}
+            title="New elements go into the active animation frame"
+          >Active Frame</button>
+          <button
+            className={state.editor.addTarget === 'layer' ? 'btn-active' : ''}
+            onClick={() => dispatch({ type: 'SET_ADD_TARGET', payload: 'layer' })}
+            title="New elements go into the selected static layer (visible across all frames)"
+          >Static Layer</button>
+        </div>
+      </div>
+
+      {/* Quick widget palette so widgets can be added without leaving animation mode.
+          Widgets always live on the static layer regardless of add-target. */}
+      <div className="prop-group" style={{ marginTop: 8 }}>
+        <label>Add widget (to static layer)</label>
+        <div className="widget-palette">
+          {WIDGET_PALETTE.map((t) => (
+            <button
+              key={t}
+              className="widget-palette-btn"
+              onClick={() => dispatch({ type: 'ADD_WIDGET', payload: { widgetType: t } })}
+              title={`Add ${WIDGET_LABELS[t]}`}
+            >+ {WIDGET_LABELS[t]}</button>
+          ))}
+        </div>
       </div>
 
       <ul className="layer-list">

@@ -3,10 +3,32 @@ import type {
   ProgressBarWidget, MeterWidget, GaugeWidget, BatteryWidget,
 } from '../types';
 import type { PixelBuffer } from '../pixelEngine';
-import { drawCircle, drawLine, drawFrame, drawBox, setPixel } from '../pixelEngine';
+import { createBuffer, drawCircle, drawLine, drawFrame, drawBox, setPixel, clearPixel } from '../pixelEngine';
 import { getWidgetPreviewValue, normalize, formatClock, drawText } from './helpers';
 
 export function renderWidget(
+  buf: PixelBuffer, dispW: number, dispH: number,
+  w: ProceduralWidget,
+): void {
+  if (w.inverted) {
+    // Render into a local temp buffer the same size as the display, then
+    // apply as clearPixel (black-on-white) into the destination buffer.
+    const tmp = createBuffer(dispW, dispH);
+    renderWidgetDirect(tmp, dispW, dispH, w);
+    for (let i = 0; i < dispW * dispH; i++) {
+      if (tmp[i]) {
+        const px = i % dispW;
+        const py = (i - px) / dispW;
+        clearPixel(buf, dispW, dispH, px, py);
+      }
+    }
+    return;
+  }
+  renderWidgetDirect(buf, dispW, dispH, w);
+}
+
+/** Render a widget directly (always sets pixels). */
+function renderWidgetDirect(
   buf: PixelBuffer, dispW: number, dispH: number,
   w: ProceduralWidget,
 ): void {

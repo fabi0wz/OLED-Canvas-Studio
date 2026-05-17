@@ -28,8 +28,11 @@ function emitNormalize(out: string[], w: ProceduralWidget) {
 export function emitWidget(out: string[], w: ProceduralWidget): void {
   const id = ident(w.id);
   out.push('');
-  out.push(`/** Widget "${w.name}" (${w.type}) */`);
+  out.push(`/** Widget "${w.name}" (${w.type}${w.inverted ? ', inverted' : ''}) */`);
   out.push(`void drawWidget_${id}() {`);
+  if (w.inverted) {
+    out.push(`  u8g2.setDrawColor(0);  // inverted: draw in black`);
+  }
   switch (w.type) {
     case 'analogClock':  emitAnalogClock(out, w); break;
     case 'digitalClock': emitDigitalClock(out, w); break;
@@ -37,6 +40,9 @@ export function emitWidget(out: string[], w: ProceduralWidget): void {
     case 'meter':        emitMeter(out, w); break;
     case 'gauge':        emitGauge(out, w); break;
     case 'battery':      emitBattery(out, w); break;
+  }
+  if (w.inverted) {
+    out.push(`  u8g2.setDrawColor(1);  // restore normal draw color`);
   }
   out.push('}');
 }

@@ -1,4 +1,5 @@
-import type { DisplayConfig, ScreenTransition } from '../types';
+import type { CanvasElement, DisplayConfig, FrameAnimation, ScreenTransition } from '../types';
+import { BITMAP_FONTS } from '../bitmapFonts';
 
 /** Sanitize a layer name into a valid C identifier suffix. */
 export function toIdent(name: string): string {
@@ -66,4 +67,79 @@ export function transitionEnum(t: ScreenTransition): string {
     case 'wipeRight':  return 'TRANS_WIPE_RIGHT';
     case 'fade':       return 'TRANS_FADE';
   }
+}
+
+/**
+ * Compute the tight bounding box (screen coords) across all frames of an animation.
+ * Width is rounded up to the nearest byte (8 px) — required by the XBM format.
+ * Falls back to the full display area if no visible elements are found.
+ */
+export function computeAnimBoundingBox(
+  animation: FrameAnimation,
+  dispW: number,
+  dispH: number,
+): { x: number; y: number; w: number; h: number } {
+  let minX = dispW, minY = dispH, maxX = 0, maxY = 0;
+
+  function expand(el: CanvasElement): void {
+    if (!el.visible) return;
+    switch (el.type) {
+      case 'rect':
+        minX = Math.min(minX, el.x); minY = Math.min(minY, el.y);
+        maxX = Math.max(maxX, el.x + el.width); maxY = Math.max(maxY, el.y + el.height);
+        break;
+      case 'line':
+        minX = Math.min(minX, el.x, el.x2); minY = Math.min(minY, el.y, el.y2);
+        maxX = Math.max(maxX, el.x + 1, el.x2 + 1); maxY = Math.max(maxY, el.y + 1, el.y2 + 1);
+        break;
+      case 'circle':
+        minX = Math.min(minX, el.x - el.radius); minY = Math.min(minY, el.y - el.radius);
+        maxX = Math.max(maxX, el.x + el.radius + 1); maxY = Math.max(maxY, el.y + el.radius + 1);
+        break;
+      case 'pixels':
+        for (const [px, py] of el.pixels) {
+          minX = Math.min(minX, el.x + px); minY = Math.min(minY, el.y + py);
+          maxX = Math.max(maxX, el.x + px + 1); maxY = Math.max(maxY, el.y + py + 1);
+        }
+        break;
+      case 'bitmap':
+        minX = Math.min(minX, el.x); minY = Math.min(minY, el.y);
+        maxX = Math.max(maxX, el.x + el.bmpWidth); maxY = Math.max(maxY, el.y + el.bmpHeight);
+        break;
+      case 'text': {
+        const font = BITMAP_FONTS[el.font] ?? BITMAP_FONTS['u8g2_font_6x10_tr'];
+        if (font) {
+          minX = Math.min(minX, el.x);
+          minY = Math.min(minY, el.y - font.baseline);
+          maxX = Math.max(maxX, el.x + el.text.length * font.width);
+          maxY = Math.max(maxY, el.y - font.baseline + font.height);
+        }
+        break;
+      }
+      case 'group':
+        for (const child of el.children) {
+          const shifted = child.type === 'line'
+            ? { ...child, x: child.x + el.x, y: child.y + el.y, x2: child.x2 + el.x, y2: child.y2 + el.y }
+            : { ...child, x: child.x + el.x, y: child.y + el.y };
+          expand(shifted as CanvasElement);
+        }
+        break;
+    }
+  }
+
+  for (const frame of animation.frames) {
+    for (const el of frame.elements) expand(el);
+  }
+
+  if (minX >= maxX || minY >= maxY) {
+    return { x: 0, y: 0, w: dispW, h: dispH };
+  }
+
+  const x = Math.max(0, minX);
+  const y = Math.max(0, minY);
+  const rawW = Math.min(dispW, maxX) - x;
+  const rawH = Math.min(dispH, maxY) - y;
+  // Round width up to byte boundary (XBM rows must be byte-aligned)
+  const w = Math.ceil(Math.max(1, rawW) / 8) * 8;
+  return { x, y, w: Math.min(w, dispW - x), h: Math.max(1, rawH) };
 }

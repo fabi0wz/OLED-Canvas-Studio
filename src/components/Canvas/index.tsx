@@ -1,16 +1,21 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+﻿import { useRef, useEffect, useCallback, useState } from 'react';
 import { useStore, snapCoord, getAllElements, getAllElementsForRender } from '../../store';
-import type { CanvasElement, PixelsElement, TextElement, RectElement, LineElement, CircleElement, GroupElement } from '../../types';
-import { FONT_METRICS } from '../../types';
+import type { CanvasElement, PixelsElement, TextElement, RectElement, LineElement, CircleElement } from '../../types';
 import { createBuffer, renderBuffer } from '../../pixelEngine';
 import { getWidgetBounds } from '../../widgets';
 import { renderElementIntoBuffer } from './rendering';
 import { type HandleId, HANDLE_CURSORS, getHandlePositions, nextId, CURSOR_MAP } from './constants';
+import { getElementBounds } from './bounds';
+import { useCanvasKeyboard } from './useCanvasKeyboard';
+import { usePlayback, useClockTick } from './usePlayback';
+import { HANDLE_HIT_TOLERANCE, DEFAULT_RECT_SIZE, DEFAULT_LINE_LENGTH, DEFAULT_CIRCLE_RADIUS } from '../../constants';
 
 export default function Canvas() {
   const { state, dispatch } = useStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // --- Interaction state ---
   const [dragging, setDragging] = useState<{ id: string; kind: 'element' | 'widget'; offsetX: number; offsetY: number } | null>(null);
   const [multiDragging, setMultiDragging] = useState<{ ids: string[]; startPx: number; startPy: number; origins: { id: string; x: number; y: number; x2?: number; y2?: number }[] } | null>(null);
   const [painting, setPainting] = useState(false);
@@ -36,64 +41,16 @@ export default function Canvas() {
     startPy: number;
   } | null>(null);
 
-  const { display, layers, selectedId, showGrid, snapSize, zoom, erasedPixels } = state;
+  const { display, selectedId, showGrid, snapSize, zoom, erasedPixels } = state;
   const w = display.width * zoom;
   const h = display.height * zoom;
 
-  // --- Helper functions (use component state via closure) ---
+  // --- Extracted hooks ---
+  useCanvasKeyboard(dispatch, state);
+  usePlayback(state, dispatch);
+  useClockTick(state.widgets);
 
-  function getElementBounds(el: CanvasElement): { x: number; y: number; w: number; h: number } {
-    switch (el.type) {
-      case 'text': {
-        const metrics = FONT_METRICS[el.font] || { width: 6, height: 10 };
-        const textW = el.text.length * metrics.width;
-        return { x: el.x, y: el.y - metrics.height, w: textW, h: metrics.height };
-      }
-      case 'rect':
-        return { x: el.x, y: el.y, w: el.width, h: el.height };
-      case 'line': {
-        const minX = Math.min(el.x, el.x2);
-        const minY = Math.min(el.y, el.y2);
-        return { x: minX, y: minY, w: Math.max(Math.max(el.x, el.x2) - minX, 1), h: Math.max(Math.max(el.y, el.y2) - minY, 1) };
-      }
-      case 'circle':
-        return { x: el.x - el.radius, y: el.y - el.radius, w: el.radius * 2 + 1, h: el.radius * 2 + 1 };
-      case 'pixels': {
-        if (el.pixels.length === 0) return { x: el.x, y: el.y, w: 1, h: 1 };
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const [px, py] of el.pixels) {
-          if (px < minX) minX = px; if (py < minY) minY = py;
-          if (px > maxX) maxX = px; if (py > maxY) maxY = py;
-        }
-        return { x: el.x + minX, y: el.y + minY, w: Math.max(maxX - minX + 1, 1), h: Math.max(maxY - minY + 1, 1) };
-      }
-      case 'bitmap':
-        return { x: el.x, y: el.y, w: el.bmpWidth, h: el.bmpHeight };
-      case 'animationRef': {
-        const anim = state.animations.find((a) => a.id === el.animationId);
-        if (!anim) return { x: el.x, y: el.y, w: 1, h: 1 };
-        return { x: el.x, y: el.y, w: display.width, h: display.height };
-      }
-      case 'widgetRef': {
-        const wgt = state.widgets.find((w) => w.id === el.widgetId);
-        if (!wgt) return { x: el.x, y: el.y, w: 1, h: 1 };
-        return getWidgetBounds(wgt);
-      }
-      case 'group': {
-        const g = el as GroupElement;
-        if (g.children.length === 0) return { x: g.x, y: g.y, w: 1, h: 1 };
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const c of g.children) {
-          const cb = getElementBounds({ ...c, x: c.x + g.x, y: c.y + g.y } as CanvasElement);
-          if (cb.x < minX) minX = cb.x;
-          if (cb.y < minY) minY = cb.y;
-          if (cb.x + cb.w > maxX) maxX = cb.x + cb.w;
-          if (cb.y + cb.h > maxY) maxY = cb.y + cb.h;
-        }
-        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-      }
-    }
-  }
+  // --- Helper functions ---
 
   function canvasToPixel(clientX: number, clientY: number): { px: number; py: number } {
     const canvas = canvasRef.current;
@@ -120,6 +77,10 @@ export default function Canvas() {
     return undefined;
   }
 
+  function boundsOf(el: CanvasElement) {
+    return getElementBounds(el, state);
+  }
+
   function hitTestHandle(clientX: number, clientY: number): HandleId | null {
     if (state.activeTool !== 'select' || !selectedId) return null;
     const sel = findElementById(selectedId);
@@ -127,13 +88,12 @@ export default function Canvas() {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const b = getElementBounds(sel);
+    const b = boundsOf(sel);
     const handles = getHandlePositions(b);
-    const tolerance = 6;
     for (const [hid, pos] of Object.entries(handles) as [HandleId, [number, number]][]) {
       const sx = rect.left + pos[0] * zoom;
       const sy = rect.top + pos[1] * zoom;
-      if (Math.abs(clientX - sx) <= tolerance && Math.abs(clientY - sy) <= tolerance) return hid;
+      if (Math.abs(clientX - sx) <= HANDLE_HIT_TOLERANCE && Math.abs(clientY - sy) <= HANDLE_HIT_TOLERANCE) return hid;
     }
     return null;
   }
@@ -143,7 +103,7 @@ export default function Canvas() {
     for (let i = all.length - 1; i >= 0; i--) {
       const { element: el, layer } = all[i];
       if (!el.visible || !layer.visible) continue;
-      const b = getElementBounds(el);
+      const b = boundsOf(el);
       if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return el;
     }
     return null;
@@ -157,7 +117,7 @@ export default function Canvas() {
     for (let i = frame.elements.length - 1; i >= 0; i--) {
       const el = frame.elements[i];
       if (!el.visible) continue;
-      const b = getElementBounds(el);
+      const b = boundsOf(el);
       if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return el;
     }
     return null;
@@ -224,7 +184,7 @@ export default function Canvas() {
     if (selectedId) {
       const sel = findElementById(selectedId);
       if (sel) {
-        const b = getElementBounds(sel);
+        const b = boundsOf(sel);
         ctx.strokeStyle = '#ffb627';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([3, 3]);
@@ -254,7 +214,7 @@ export default function Canvas() {
         if (sid === selectedId) continue;
         const el = findElementById(sid);
         if (!el) continue;
-        const b = getElementBounds(el);
+        const b = boundsOf(el);
         ctx.strokeStyle = '#ffb627';
         ctx.lineWidth = 1;
         ctx.setLineDash([2, 2]);
@@ -280,82 +240,10 @@ export default function Canvas() {
       ctx.fillStyle = 'rgba(255, 91, 107, 0.55)';
       ctx.fillRect(mousePixel.x * zoom, mousePixel.y * zoom, zoom, zoom);
     }
-  }, [layers, selectedId, showGrid, snapSize, zoom, display, w, h, state, erasedPixels, mousePixel, hoverHandle, resizing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, erasedPixels, mousePixel, hoverHandle, resizing, w, h, zoom, display, showGrid, snapSize, selectedId]);
 
   useEffect(() => { draw(); }, [draw]);
-
-  // --- Effects ---
-
-  // Playback ticker
-  useEffect(() => {
-    if (!state.editor.playing) return;
-    const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
-    if (!anim || anim.frames.length < 2) return;
-    const idx = anim.frames.findIndex((f) => f.id === state.editor.activeFrameId);
-    const cur = idx >= 0 ? idx : 0;
-    const dur = Math.max(16, anim.frames[cur].durationMs);
-    const t = setTimeout(() => {
-      let next: number;
-      if (anim.playMode === 'once') {
-        next = cur + 1;
-        if (next >= anim.frames.length) { dispatch({ type: 'SET_PLAYING', payload: false }); return; }
-      } else {
-        next = (cur + 1) % anim.frames.length;
-      }
-      dispatch({ type: 'SELECT_FRAME', payload: { animationId: anim.id, frameId: anim.frames[next].id } });
-    }, dur);
-    return () => clearTimeout(t);
-  }, [state.editor.playing, state.editor.activeFrameId, state.editor.activeAnimationId, state.animations, dispatch]);
-
-  // Clock tick
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const hasTimeWidget = state.widgets.some((w) => w.valueSource === 'time' && (w.type === 'analogClock' || w.type === 'digitalClock'));
-    if (!hasTimeWidget) return;
-    const i = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(i);
-  }, [state.widgets]);
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      // Ctrl+G = group, Ctrl+Shift+G = ungroup, Ctrl+Shift+F = flatten
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g' && !e.shiftKey) {
-        e.preventDefault();
-        dispatch({ type: 'GROUP_ELEMENTS' });
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
-        e.preventDefault();
-        if (state.selectedId) dispatch({ type: 'UNGROUP_ELEMENT', payload: state.selectedId });
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
-        e.preventDefault();
-        dispatch({ type: 'FLATTEN_ELEMENTS' });
-        return;
-      }
-      switch (e.key.toLowerCase()) {
-        case 'v': dispatch({ type: 'SET_TOOL', payload: 'select' }); break;
-        case 't': dispatch({ type: 'SET_TOOL', payload: 'add-text' }); break;
-        case 'r': dispatch({ type: 'SET_TOOL', payload: 'add-rect' }); break;
-        case 'c': dispatch({ type: 'SET_TOOL', payload: 'add-circle' }); break;
-        case 'l': dispatch({ type: 'SET_TOOL', payload: 'add-line' }); break;
-        case 'd': dispatch({ type: 'SET_TOOL', payload: 'freedraw' }); break;
-        case 'e': dispatch({ type: 'SET_TOOL', payload: 'eraser' }); break;
-        case 'i': document.querySelector<HTMLInputElement>('input[type="file"][accept="image/*"]')?.click(); break;
-        case 'delete':
-        case 'backspace':
-          if (state.editor.selectedWidgetId) dispatch({ type: 'DELETE_WIDGET', payload: state.editor.selectedWidgetId });
-          else if (state.selectedId) dispatch({ type: 'DELETE_ELEMENT', payload: state.selectedId });
-          break;
-      }
-    }
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [dispatch, state.selectedId]);
 
   // Ctrl+Wheel zoom
   useEffect(() => {
@@ -460,7 +348,7 @@ export default function Canvas() {
       if (handle) {
         const sel = findElementById(selectedId);
         if (sel) {
-          setResizing({ id: sel.id, handle, startBounds: getElementBounds(sel), startMouse: { px: raw.px, py: raw.py } });
+          setResizing({ id: sel.id, handle, startBounds: boundsOf(sel), startMouse: { px: raw.px, py: raw.py } });
           return;
         }
       }
@@ -506,7 +394,6 @@ export default function Canvas() {
       if (e.shiftKey && state.activeTool === 'select') {
         dispatch({ type: 'SELECT_ELEMENT_MULTI', payload: hit.id });
       } else {
-        // If clicking on an already multi-selected element, start multi-drag
         if (state.selectedIds.length > 1 && state.selectedIds.includes(hit.id)) {
           const origins = state.selectedIds.map((sid) => {
             const el = findElementById(sid);
@@ -533,7 +420,7 @@ export default function Canvas() {
     const coordsEl = document.getElementById('canvas-coords');
     if (coordsEl) {
       coordsEl.textContent = (raw.px >= 0 && raw.px < display.width && raw.py >= 0 && raw.py < display.height)
-        ? `${raw.px},${raw.py}` : '—,—';
+        ? `${raw.px},${raw.py}` : '\u2014,\u2014';
     }
 
     if (panning) {
@@ -623,9 +510,13 @@ export default function Canvas() {
     if (creating) {
       const el = findElementById(creating.id);
       if (el) {
-        if (el.type === 'rect' && el.width < 2 && el.height < 2) dispatch({ type: 'UPDATE_ELEMENT', payload: { ...el, width: 30, height: 20 } });
-        else if (el.type === 'line' && el.x === el.x2 && el.y === el.y2) dispatch({ type: 'UPDATE_ELEMENT', payload: { ...el, x2: el.x + 30, y2: el.y } });
-        else if (el.type === 'circle' && el.radius < 2) dispatch({ type: 'UPDATE_ELEMENT', payload: { ...el, radius: 10 } });
+        if (el.type === 'rect' && el.width < 2 && el.height < 2) {
+          dispatch({ type: 'UPDATE_ELEMENT', payload: { ...el, width: DEFAULT_RECT_SIZE.width, height: DEFAULT_RECT_SIZE.height } });
+        } else if (el.type === 'line' && el.x === el.x2 && el.y === el.y2) {
+          dispatch({ type: 'UPDATE_ELEMENT', payload: { ...el, x2: el.x + DEFAULT_LINE_LENGTH, y2: el.y } });
+        } else if (el.type === 'circle' && el.radius < 2) {
+          dispatch({ type: 'UPDATE_ELEMENT', payload: { ...el, radius: DEFAULT_CIRCLE_RADIUS } });
+        }
       }
       dispatch({ type: 'SET_TOOL', payload: 'select' });
       setCreating(null);
@@ -655,12 +546,11 @@ export default function Canvas() {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          onDoubleClick={() => {}}
           onContextMenu={(e) => e.preventDefault()}
         />
       </div>
       <div className="canvas-info">
-        {display.type} {display.width}×{display.height} | {zoom}x
+        {display.type} {display.width}{'\u00D7'}{display.height} | {zoom}x
         {snapSize > 0 && <> | SNAP {snapSize}px</>}
         {erasedPixels.length > 0 && (
           <button className="reset-pan-btn" onClick={() => dispatch({ type: 'CLEAR_ERASED' })}>

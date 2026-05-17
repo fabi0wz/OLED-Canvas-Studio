@@ -9,6 +9,7 @@ import FramePanel from './components/FramePanel';
 import WidgetPanel from './components/WidgetPanel';
 import PropertiesPanel from './components/PropertiesPanel';
 import CodePanel from './components/CodePanel';
+import { PANEL_LIMITS } from './constants';
 import './App.css';
 
 /** Picks the left-panel content based on the current scene mode. */
@@ -63,7 +64,7 @@ export default function App() {
                 <Toolbar />
                 <ScenePanel />
               </aside>
-              <ResizeHandle side="left" onResize={(d) => setLeftWidth((w) => Math.max(180, Math.min(420, w + d)))} />
+              <ResizeHandle side="left" onResize={(d) => setLeftWidth((w) => Math.max(PANEL_LIMITS.left.min, Math.min(PANEL_LIMITS.left.max, w + d)))} />
             </>
           )}
           <main className="center-area">
@@ -72,7 +73,7 @@ export default function App() {
             </div>
             {!bottomCollapsed && (
               <>
-                <ResizeHandle side="bottom" onResize={(d) => setBottomHeight((h) => Math.max(100, Math.min(600, h - d)))} />
+                <ResizeHandle side="bottom" onResize={(d) => setBottomHeight((h) => Math.max(PANEL_LIMITS.bottom.min, Math.min(PANEL_LIMITS.bottom.max, h - d)))} />
                 <div style={{ height: bottomHeight, minHeight: bottomHeight }}>
                   <CodePanel />
                 </div>
@@ -81,7 +82,7 @@ export default function App() {
           </main>
           {!rightCollapsed && (
             <>
-              <ResizeHandle side="right" onResize={(d) => setRightWidth((w) => Math.max(200, Math.min(420, w - d)))} />
+              <ResizeHandle side="right" onResize={(d) => setRightWidth((w) => Math.max(PANEL_LIMITS.right.min, Math.min(PANEL_LIMITS.right.max, w - d)))} />
               <aside className="right-panel" style={{ width: rightWidth }}>
                 <PropertiesPanel />
               </aside>

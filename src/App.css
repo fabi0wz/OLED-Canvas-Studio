@@ -627,6 +627,56 @@ button:active {
   border-bottom: none;
 }
 
+/* Tab bar for Full Sketch / Anim Snippet */
+.code-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 14px 0;
+  background: var(--bg-panel-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.code-tab {
+  padding: 4px 12px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.code-tab:hover {
+  color: var(--fg);
+  background: var(--bg-panel);
+}
+
+.code-tab.active {
+  color: var(--oled);
+  background: var(--bg-deep);
+  border-color: var(--border);
+}
+
+.snippet-scope {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--fg-muted);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 4px;
+}
+
+.snippet-scope label {
+  cursor: pointer;
+  user-select: none;
+}
+
 .code-output {
   flex: 1;
   overflow: auto;

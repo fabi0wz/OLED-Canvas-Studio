@@ -1,7 +1,6 @@
 import { useStore } from '../store';
 import { DISPLAY_PRESETS, SNAP_PRESETS } from '../types';
-
-const ZOOM_PRESETS = [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20];
+import { ZOOM_PRESETS } from '../constants';
 
 export default function Toolbar() {
   const { state, dispatch } = useStore();

@@ -23,6 +23,11 @@ export default function WidgetProperties({ widget }: { widget: ProceduralWidget 
         <input type="checkbox" checked={widget.visible} onChange={(e) => update({ visible: e.target.checked })} />
       </div>
 
+      <div className="prop-group">
+        <label>Inverted (draw black on white)</label>
+        <input type="checkbox" checked={widget.inverted} onChange={(e) => update({ inverted: e.target.checked })} />
+      </div>
+
       <div className="prop-row">
         <div className="prop-group"><label>X</label>
           <input type="number" value={widget.x} onChange={(e) => update({ x: Number(e.target.value) })} /></div>

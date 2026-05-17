@@ -5,6 +5,7 @@ export interface BaseElement {
   y: number;
   visible: boolean;
   strokeWidth: number;
+  inverted?: boolean;
 }
 
 export interface TextElement extends BaseElement {
@@ -12,7 +13,6 @@ export interface TextElement extends BaseElement {
   text: string;
   font: string;
   align: 'left' | 'center' | 'right';
-  inverted?: boolean;
 }
 
 export interface RectElement extends BaseElement {
@@ -20,27 +20,23 @@ export interface RectElement extends BaseElement {
   width: number;
   height: number;
   filled: boolean;
-  inverted?: boolean;
 }
 
 export interface LineElement extends BaseElement {
   type: 'line';
   x2: number;
   y2: number;
-  inverted?: boolean;
 }
 
 export interface CircleElement extends BaseElement {
   type: 'circle';
   radius: number;
   filled: boolean;
-  inverted?: boolean;
 }
 
 export interface PixelsElement extends BaseElement {
   type: 'pixels';
   pixels: [number, number][];
-  inverted?: boolean;
 }
 
 export interface GroupElement extends BaseElement {

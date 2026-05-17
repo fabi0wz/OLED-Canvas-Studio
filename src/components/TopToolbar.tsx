@@ -1,5 +1,6 @@
 import { useStore, type ActiveTool, type SceneMode } from '../store';
 import { useRef } from 'react';
+import { uid } from '../utils/uid';
 
 const tools: { id: ActiveTool; label: string; icon: string; shortcut?: string }[] = [
   {
@@ -98,7 +99,7 @@ export default function TopToolbar() {
         dispatch({
           type: 'ADD_ELEMENT',
           payload: {
-            id: `bitmap_${Date.now()}`,
+            id: uid('bitmap'),
             type: 'bitmap' as const,
             x: 0, y: 0,
             visible: true,
@@ -170,20 +171,41 @@ export default function TopToolbar() {
           ))}
         </div>
 
-        {/* Playback controls (animation mode only) */}
-        {state.editor.mode === 'animation' && (() => {
-          const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId);
-          if (!anim) return null;
-          const idx = anim.frames.findIndex((f) => f.id === state.editor.activeFrameId);
+        {/* Playback controls — available in any mode whenever an animation exists,
+            so you can preview animations alongside static elements. */}
+        {state.animations.length > 0 && (() => {
+          const anim = state.animations.find((a) => a.id === state.editor.activeAnimationId)
+            ?? state.animations[0];
+          const idx = Math.max(0, anim.frames.findIndex((f) => f.id === state.editor.activeFrameId));
           const goTo = (i: number) => {
+            if (anim.frames.length === 0) return;
             const ni = ((i % anim.frames.length) + anim.frames.length) % anim.frames.length;
             dispatch({ type: 'SELECT_FRAME', payload: { animationId: anim.id, frameId: anim.frames[ni].id } });
           };
+          const togglePlay = () => {
+            // Ensure an animation is selected before starting playback (e.g. in static mode).
+            if (!state.editor.activeAnimationId || state.editor.activeAnimationId !== anim.id) {
+              dispatch({ type: 'SELECT_ANIMATION', payload: anim.id });
+            }
+            dispatch({ type: 'SET_PLAYING', payload: !state.editor.playing });
+          };
           return (
             <div className="playback-controls">
+              {state.animations.length > 1 && (
+                <select
+                  value={anim.id}
+                  onChange={(e) => dispatch({ type: 'SELECT_ANIMATION', payload: e.target.value })}
+                  title="Animation to play"
+                  style={{ maxWidth: 110 }}
+                >
+                  {state.animations.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              )}
               <button onClick={() => goTo(idx - 1)} title="Previous frame">⏮</button>
               <button
-                onClick={() => dispatch({ type: 'SET_PLAYING', payload: !state.editor.playing })}
+                onClick={togglePlay}
                 className={state.editor.playing ? 'tool-active' : ''}
                 title={state.editor.playing ? 'Pause' : 'Play'}
               >{state.editor.playing ? '⏸' : '▶'}</button>

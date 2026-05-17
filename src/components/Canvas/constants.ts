@@ -1,3 +1,5 @@
+import { uid } from '../../utils/uid';
+
 export type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
 export const HANDLE_CURSORS: Record<HandleId, string> = {
@@ -20,9 +22,9 @@ export function getHandlePositions(b: { x: number; y: number; w: number; h: numb
   };
 }
 
-let idCounter = 0;
+/** Generate a unique element ID. Uses shared uid() utility. */
 export function nextId(type: string): string {
-  return `${type}_${++idCounter}_${Date.now()}`;
+  return uid(type);
 }
 
 export const CURSOR_MAP: Record<string, string> = {

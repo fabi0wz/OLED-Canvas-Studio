@@ -56,11 +56,32 @@ export function emitElement(out: string[], el: CanvasElement, lastFontRef: { fon
       if (inv) out.push(`  u8g2.setDrawColor(1);`);
       break;
     }
-    case 'pixels':
+    case 'pixels': {
       if (el.inverted) out.push(`  u8g2.setDrawColor(0);`);
-      for (const [px, py] of el.pixels) out.push(`  u8g2.drawPixel(${el.x + px}, ${el.y + py});`);
+      // Group pixels by row, sort by x, then merge consecutive x into drawHLine runs
+      const byRow = new Map<number, number[]>();
+      for (const [px, py] of el.pixels) {
+        const row = el.y + py;
+        const col = el.x + px;
+        let cols = byRow.get(row);
+        if (!cols) { cols = []; byRow.set(row, cols); }
+        cols.push(col);
+      }
+      for (const [row, rawCols] of [...byRow.entries()].sort((a, b) => a[0] - b[0])) {
+        const cols = [...new Set(rawCols)].sort((a, b) => a - b);
+        let i = 0;
+        while (i < cols.length) {
+          let j = i;
+          while (j + 1 < cols.length && cols[j + 1] === cols[j] + 1) j++;
+          const run = j - i + 1;
+          if (run === 1) out.push(`  u8g2.drawPixel(${cols[i]}, ${row});`);
+          else out.push(`  u8g2.drawHLine(${cols[i]}, ${row}, ${run});`);
+          i = j + 1;
+        }
+      }
       if (el.inverted) out.push(`  u8g2.setDrawColor(1);`);
       break;
+    }
     case 'group':
       out.push(`  // Group`);
       for (const child of el.children) {

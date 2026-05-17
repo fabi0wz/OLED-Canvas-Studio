@@ -3,7 +3,7 @@ import type {
   ProceduralWidget, Screen, WidgetRefElement, GroupElement,
 } from '../types';
 import type { AppState } from './types';
-import { uid } from './initialState';
+import { uid } from '../utils/uid';
 
 /** Snapshot the live working state back into the active screen entry. */
 export function commitActive(state: AppState): Screen[] {
@@ -152,7 +152,8 @@ export function findElement(state: AppState, id: string):
 
 /** Push a new element into the currently active container (layer or frame). */
 export function addElementToActiveContainer(state: AppState, el: CanvasElement): Partial<AppState> {
-  if (state.editor.mode === 'animation' && state.editor.activeAnimationId && state.editor.activeFrameId) {
+  const inAnimation = state.editor.mode === 'animation' && state.editor.activeAnimationId && state.editor.activeFrameId;
+  if (inAnimation && state.editor.addTarget === 'frame') {
     return {
       animations: state.animations.map((a) =>
         a.id !== state.editor.activeAnimationId ? a : {

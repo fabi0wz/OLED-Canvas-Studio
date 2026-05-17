@@ -1,28 +1,53 @@
 import { useState } from 'react';
 import { useStore, getAllScreensCommitted } from '../store';
-import { generateU8g2Code } from '../codegen';
+import { generateU8g2Code, generateAnimSnippet } from '../codegen';
+
+type Tab = 'sketch' | 'snippet';
+type SnippetScope = 'all' | 'selected';
 
 export default function CodePanel() {
   const { state, dispatch } = useStore();
   const [copied, setCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('sketch');
+  const [snippetScope, setSnippetScope] = useState<SnippetScope>('all');
 
   const screens = getAllScreensCommitted(state);
-  const code = generateU8g2Code({
+
+  const sketchCode = generateU8g2Code({
     display: state.display,
     screens,
     defaultScreenId: state.project.defaultScreenId,
     projectName: state.project.name,
   });
 
+  // Collect animations for the snippet tab
+  const activeScreenAnimations = state.animations; // current screen's animations
+  const allScreenAnimations = screens.flatMap(s => s.animations);
+  const selectedAnimation = state.editor.activeAnimationId
+    ? activeScreenAnimations.find(a => a.id === state.editor.activeAnimationId) ?? null
+    : null;
+
+  const snippetAnimations =
+    snippetScope === 'selected' && selectedAnimation
+      ? [selectedAnimation]
+      : allScreenAnimations;
+
+  const snippetCode = generateAnimSnippet({
+    display: state.display,
+    animations: snippetAnimations,
+  });
+
+  const activeCode = activeTab === 'sketch' ? sketchCode : snippetCode;
+
   function handleCopy() {
-    navigator.clipboard.writeText(code).then(() => {
+    navigator.clipboard.writeText(activeCode).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
   }
 
   function handleDownloadIno() {
-    const blob = new Blob([code], { type: 'text/plain' });
+    const blob = new Blob([sketchCode], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -109,12 +134,58 @@ export default function CodePanel() {
             title="Project name (used as default filename)"
           />
           <button onClick={handleCopy}>{copied ? '✓ Copied' : 'Copy'}</button>
-          <button onClick={handleDownloadIno}>.ino</button>
+          {activeTab === 'sketch' && <button onClick={handleDownloadIno}>.ino</button>}
           <button onClick={handleSaveProject}>Save</button>
           <button onClick={handleLoadProject}>Load</button>
         </div>
       </div>
-      <pre className="code-output"><code>{code}</code></pre>
+
+      {/* Tab bar */}
+      <div className="code-tabs">
+        <button
+          className={`code-tab${activeTab === 'sketch' ? ' active' : ''}`}
+          onClick={() => setActiveTab('sketch')}
+        >
+          Full Sketch
+        </button>
+        <button
+          className={`code-tab${activeTab === 'snippet' ? ' active' : ''}`}
+          onClick={() => setActiveTab('snippet')}
+          title="Export animation(s) as a drop-in snippet for use in existing sketches"
+        >
+          Anim Snippet
+        </button>
+
+        {/* Snippet scope selector — only shown on snippet tab */}
+        {activeTab === 'snippet' && (
+          <span className="snippet-scope">
+            <label>
+              <input
+                type="radio"
+                name="snippetScope"
+                value="all"
+                checked={snippetScope === 'all'}
+                onChange={() => setSnippetScope('all')}
+              />
+              {' All animations'}
+            </label>
+            <label style={{ marginLeft: 8 }}>
+              <input
+                type="radio"
+                name="snippetScope"
+                value="selected"
+                checked={snippetScope === 'selected'}
+                onChange={() => setSnippetScope('selected')}
+                disabled={!selectedAnimation}
+              />
+              {' Selected'}
+              {selectedAnimation ? ` (${selectedAnimation.name})` : ' (none)'}
+            </label>
+          </span>
+        )}
+      </div>
+
+      <pre className="code-output"><code>{activeCode}</code></pre>
     </div>
   );
 }

@@ -90,7 +90,7 @@ export function reduceAnimation(state: AppState, action: Action): AppState {
       const cloned: Frame = {
         id: uid('frame'),
         durationMs: src.durationMs,
-        elements: src.elements.map((el) => ({ ...el, id: `${el.type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` })),
+        elements: src.elements.map((el) => ({ ...el, id: uid(el.type) })),
       };
       const idx = anim.frames.findIndex((f) => f.id === src.id);
       const newFrames = [...anim.frames.slice(0, idx + 1), cloned, ...anim.frames.slice(idx + 1)];

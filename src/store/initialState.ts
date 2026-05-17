@@ -1,9 +1,9 @@
 import type { CanvasElement, Layer, FrameAnimation, Frame, Screen } from '../types';
 import type { AppState } from './types';
+import { uid } from '../utils/uid';
+import { DEFAULT_ZOOM } from '../constants';
 
-export function uid(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-}
+export { uid } from '../utils/uid';
 
 export function makeLayer(name: string, elements: CanvasElement[] = []): Layer {
   return { id: uid('layer'), name, visible: true, elements };
@@ -54,7 +54,7 @@ export const initialState: AppState = {
   erasedPixels: [],
   showGrid: false,
   snapSize: 0,
-  zoom: 3,
+  zoom: DEFAULT_ZOOM,
   activeTool: 'select',
   animations: [],
   widgets: [],
@@ -67,6 +67,7 @@ export const initialState: AppState = {
     onionOpacity: 0.35,
     playing: false,
     selectedWidgetId: null,
+    addTarget: 'frame',
   },
   project: { name: 'My Gadget', defaultScreenId: defaultScreen.id },
   screens: [defaultScreen],

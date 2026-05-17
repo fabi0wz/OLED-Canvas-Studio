@@ -17,6 +17,9 @@ export function reduceEditor(state: AppState, action: Action): AppState {
     case 'SET_PLAYING':
       return { ...state, editor: { ...state.editor, playing: action.payload } };
 
+    case 'SET_ADD_TARGET':
+      return { ...state, editor: { ...state.editor, addTarget: action.payload } };
+
     case 'TOGGLE_GRID':
       return { ...state, showGrid: !state.showGrid };
 

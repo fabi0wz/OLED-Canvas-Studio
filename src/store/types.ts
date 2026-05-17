@@ -8,6 +8,9 @@ export type ActiveTool = 'select' | 'freedraw' | 'eraser' | 'add-text' | 'add-re
 
 export type SceneMode = 'static' | 'animation' | 'widgets';
 
+/** Where new elements should be inserted when in animation mode. */
+export type AddTarget = 'frame' | 'layer';
+
 export interface EditorState {
   mode: SceneMode;
   activeAnimationId: string | null;
@@ -17,6 +20,8 @@ export interface EditorState {
   onionOpacity: number;
   playing: boolean;
   selectedWidgetId: string | null;
+  /** In animation mode, whether to add to the active frame or to the static layer. */
+  addTarget: AddTarget;
 }
 
 export interface AppState {
@@ -67,6 +72,7 @@ export type Action =
   | { type: 'SET_SCENE_MODE'; payload: SceneMode }
   | { type: 'SET_ONION'; payload: Partial<Pick<EditorState, 'onionPrev' | 'onionNext' | 'onionOpacity'>> }
   | { type: 'SET_PLAYING'; payload: boolean }
+  | { type: 'SET_ADD_TARGET'; payload: AddTarget }
   | { type: 'ADD_ANIMATION'; payload?: { name?: string } }
   | { type: 'DELETE_ANIMATION'; payload: string }
   | { type: 'RENAME_ANIMATION'; payload: { id: string; name: string } }

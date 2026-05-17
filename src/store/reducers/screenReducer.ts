@@ -2,6 +2,7 @@ import type { Layer, ProjectMeta, Screen } from '../../types';
 import type { AppState, Action } from '../types';
 import { makeLayer, makeScreen } from '../initialState';
 import { commitActive, cloneScreen } from '../helpers';
+import { uid } from '../../utils/uid';
 
 export function reduceScreen(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -160,7 +161,7 @@ export function reduceScreen(state: AppState, action: Action): AppState {
         else if (p.elements) legacyLayers = [makeLayer('main', p.elements)];
         else legacyLayers = [makeLayer('main')];
         screens = [{
-          id: `screen_${Date.now()}`,
+          id: uid('screen'),
           name: 'Screen 1',
           transition: 'instant',
           layers: legacyLayers,

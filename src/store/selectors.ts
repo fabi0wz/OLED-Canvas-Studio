@@ -1,5 +1,6 @@
-import type { CanvasElement, Layer, Screen } from '../types';
+import type { CanvasElement, Layer } from '../types';
 import type { AppState } from './types';
+import { commitActive } from './helpers';
 
 /** Snap a coordinate to the current grid. */
 export function snapCoord(v: number, snapSize: number): number {
@@ -44,10 +45,4 @@ export function getAllElementsForRender(state: AppState): { element: CanvasEleme
  * Returns the full list of project screens with the active screen's live
  * working state committed in. Use this when serializing or generating code.
  */
-export function getAllScreensCommitted(state: AppState): Screen[] {
-  return state.screens.map((s) => (
-    s.id === state.activeScreenId
-      ? { ...s, layers: state.layers, animations: state.animations, widgets: state.widgets, erasedPixels: state.erasedPixels }
-      : s
-  ));
-}
+export const getAllScreensCommitted = commitActive;

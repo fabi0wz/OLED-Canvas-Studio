@@ -6,7 +6,7 @@ import {
 } from '../helpers';
 import { rasterizeElementToPixels } from '../transforms';
 import { transformElement, resizeElement } from '../transforms';
-import { nextId } from '../../components/Canvas/constants';
+import { uid } from '../../utils/uid';
 
 export function reduceElement(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -94,7 +94,7 @@ export function reduceElement(state: AppState, action: Action): AppState {
       const found = findElement(state, action.payload);
       if (!found) return state;
       const source = found.element;
-      const newEl = { ...source, id: `${source.type}_${Date.now()}`, x: source.x + 5, y: source.y + 5 };
+      const newEl = { ...source, id: uid(source.type), x: source.x + 5, y: source.y + 5 };
       if (found.kind === 'layer') {
         return {
           ...state,
@@ -150,7 +150,7 @@ export function reduceElement(state: AppState, action: Action): AppState {
           const hit = raster.pixels.some(([px, py]) => raster.x + px === x && raster.y + py === y);
           if (!hit) continue;
           const nextPixels = raster.pixels.filter(([px, py]) => raster.x + px !== x || raster.y + py !== y);
-          newEls[ei] = { id: el.id, type: 'pixels', x: raster.x, y: raster.y, visible: el.visible, strokeWidth: 1, pixels: nextPixels, inverted: ('inverted' in el && !!(el as any).inverted) || undefined };
+          newEls[ei] = { id: el.id, type: 'pixels', x: raster.x, y: raster.y, visible: el.visible, strokeWidth: 1, pixels: nextPixels, inverted: el.inverted || undefined };
           break;
         }
         const newAnim = { ...anim, frames: anim.frames.map((f, i) => i === frameIdx ? { ...frame, elements: newEls } : f) };
@@ -177,7 +177,7 @@ export function reduceElement(state: AppState, action: Action): AppState {
           const hit = raster.pixels.some(([px, py]) => raster.x + px === x && raster.y + py === y);
           if (!hit) continue;
           const nextPixels = raster.pixels.filter(([px, py]) => raster.x + px !== x || raster.y + py !== y);
-          layer.elements[ei] = { id: el.id, type: 'pixels', x: raster.x, y: raster.y, visible: el.visible, strokeWidth: 1, pixels: nextPixels, inverted: ('inverted' in el && !!(el as any).inverted) || undefined };
+          layer.elements[ei] = { id: el.id, type: 'pixels', x: raster.x, y: raster.y, visible: el.visible, strokeWidth: 1, pixels: nextPixels, inverted: el.inverted || undefined };
           return { ...state, layers: newLayers, erasedPixels: state.erasedPixels.filter(([px, py]) => px !== x || py !== y) };
         }
       }
@@ -258,7 +258,7 @@ export function reduceElement(state: AppState, action: Action): AppState {
         return { ...c, x: c.x - minX, y: c.y - minY };
       });
       const groupEl: GroupElement = {
-        id: nextId('group'), type: 'group', x: minX, y: minY,
+        id: uid('group'), type: 'group', x: minX, y: minY,
         visible: true, strokeWidth: 1, children: relChildren,
       };
       // Replace children with group in layer, preserving order (insert at first child position)
@@ -333,7 +333,7 @@ export function reduceElement(state: AppState, action: Action): AppState {
           }
           return;
         }
-        const inv = 'inverted' in el && !!(el as any).inverted;
+        const inv = !!el.inverted;
         const raster = rasterizeElementToPixels(el);
         if (!raster) return;
         const target = inv ? invertedPixels : normalPixels;
@@ -349,14 +349,14 @@ export function reduceElement(state: AppState, action: Action): AppState {
         let mx = Infinity, my = Infinity;
         for (const [x, y] of pts) { if (x < mx) mx = x; if (y < my) my = y; }
         const rel: [number, number][] = pts.map(([x, y]) => [x - mx, y - my]);
-        results.push({ id: nextId('pixels'), type: 'pixels', x: mx, y: my, visible: true, strokeWidth: 1, pixels: rel });
+        results.push({ id: uid('pixels'), type: 'pixels', x: mx, y: my, visible: true, strokeWidth: 1, pixels: rel });
       }
       if (invertedPixels.size > 0) {
         const pts = [...invertedPixels].map((s) => s.split(',').map(Number) as [number, number]);
         let mx = Infinity, my = Infinity;
         for (const [x, y] of pts) { if (x < mx) mx = x; if (y < my) my = y; }
         const rel: [number, number][] = pts.map(([x, y]) => [x - mx, y - my]);
-        results.push({ id: nextId('pixels'), type: 'pixels', x: mx, y: my, visible: true, strokeWidth: 1, pixels: rel, inverted: true });
+        results.push({ id: uid('pixels'), type: 'pixels', x: mx, y: my, visible: true, strokeWidth: 1, pixels: rel, inverted: true });
       }
       if (results.length === 0) return state;
       // Replace targets with results

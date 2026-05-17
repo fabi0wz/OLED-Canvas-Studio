@@ -24,6 +24,8 @@ export interface WidgetBase {
   /** Min / max numeric range for value-driven widgets. */
   min: number;
   max: number;
+  /** If true, pixels are cleared instead of set (draws in black on a white background). */
+  inverted: boolean;
 }
 
 export interface AnalogClockWidget extends WidgetBase {

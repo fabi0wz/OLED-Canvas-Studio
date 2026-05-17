@@ -1,11 +1,12 @@
 import type { AppState, Action } from '../types';
 import { findElement } from '../helpers';
+import { uid } from '../../utils/uid';
 
 export function reduceLayer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'ADD_LAYER': {
       const baseName = action.payload?.name?.trim() || `layer ${state.layers.length + 1}`;
-      const layer = { id: `layer_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: baseName, visible: true, elements: [] as import('../../types').CanvasElement[] };
+      const layer = { id: uid('layer'), name: baseName, visible: true, elements: [] as import('../../types').CanvasElement[] };
       return { ...state, layers: [...state.layers, layer], selectedLayerId: layer.id };
     }
 
